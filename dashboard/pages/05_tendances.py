@@ -1,7 +1,7 @@
 import streamlit as st
 from dashboard.data.db import get_session
-from dashboard.data.models import LigneFacture
 from dashboard.analytics.tendances import volume_mensuel, evolution_prix_matiere
+from dashboard.data.entity_resolution import get_distinct_values, expand_canonical
 from dashboard.components.charts import bar_chart, line_chart
 from dashboard.components.data_table import data_table
 
@@ -25,14 +25,13 @@ if not vol.empty:
 
 # --- Evolution prix par matiere ---
 st.subheader("Evolution des prix par matiere")
-matieres = [m[0] for m in session.query(LigneFacture.type_matiere).distinct().filter(
-    LigneFacture.type_matiere.isnot(None)
-).all()]
+matieres = get_distinct_values(session, "material")
 
 if matieres:
-    selected = st.selectbox("Selectionner une matiere", sorted(matieres))
+    selected = st.selectbox("Selectionner une matiere", matieres)
     if selected:
-        evo = evolution_prix_matiere(session, selected)
+        raw_values = expand_canonical(session, "material", selected)
+        evo = evolution_prix_matiere(session, selected, raw_values=raw_values)
         if not evo.empty:
             st.plotly_chart(line_chart(evo, x="mois", y="prix_unitaire_moyen",
                                        title=f"Prix unitaire moyen -- {selected}"), use_container_width=True)

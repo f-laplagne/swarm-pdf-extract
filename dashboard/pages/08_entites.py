@@ -20,6 +20,7 @@ from dashboard.data.entity_resolution import (
     revert_merge,
     get_pending_reviews,
 )
+from dashboard.data.entity_enrichment import run_auto_resolution
 
 st.set_page_config(page_title="Gestion des entites", page_icon="\U0001f517", layout="wide")
 st.title("\U0001f517 Gestion des entites")
@@ -101,6 +102,38 @@ def _get_raw_values(entity_type: str) -> list[str]:
 
     return sorted(raw_set)
 
+
+# ---------------------------------------------------------------------------
+# Auto-resolution
+# ---------------------------------------------------------------------------
+
+st.subheader("Resolution automatique")
+
+col_auto1, col_auto2 = st.columns([1, 3])
+with col_auto1:
+    if st.button("Lancer la resolution automatique", key="btn_auto_resolve", type="primary"):
+        auto_config = config if config.get("entity_resolution") else {
+            "entity_resolution": {
+                "auto_merge_threshold": 0.90,
+                "review_threshold": 0.50,
+                "fuzzy_min_score": 50,
+            }
+        }
+        with st.spinner("Resolution en cours..."):
+            stats = run_auto_resolution(session, auto_config)
+        st.session_state["auto_resolution_stats"] = stats
+        st.rerun()
+
+with col_auto2:
+    if "auto_resolution_stats" in st.session_state:
+        stats = st.session_state["auto_resolution_stats"]
+        st.success(
+            f"Resolution terminee : **{stats['auto_merged']}** fusion(s) automatique(s), "
+            f"**{stats['pending_review']}** en attente de revue, "
+            f"**{stats['ignored']}** ignore(s)."
+        )
+
+st.markdown("---")
 
 # ---------------------------------------------------------------------------
 # Tabs

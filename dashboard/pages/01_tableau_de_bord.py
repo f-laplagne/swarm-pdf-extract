@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from dashboard.data.db import get_session
-from dashboard.data.models import Document, LigneFacture, Fournisseur, Anomalie
+from dashboard.data.models import Document, LigneFacture, Fournisseur, Anomalie, EntityMapping
 from dashboard.analytics.achats import top_fournisseurs_by_montant
 from dashboard.analytics.anomalies import get_anomaly_stats
 from dashboard.analytics.qualite import score_global
@@ -51,6 +51,24 @@ with col3:
     st.metric("Anomalies detectees", str(anomaly_stats["total"]))
 with col4:
     st.metric("Delai moyen livraison", f"{delai['delai_moyen_jours']:.1f} j")
+
+st.markdown("---")
+
+# --- KPIs Row 3: Entity Resolution ---
+nb_resolved = session.query(func.count(EntityMapping.id)).filter(
+    EntityMapping.status == "approved"
+).scalar() or 0
+nb_pending = session.query(func.count(EntityMapping.id)).filter(
+    EntityMapping.status == "pending_review"
+).scalar() or 0
+
+col_er1, col_er2, col_er3 = st.columns(3)
+with col_er1:
+    st.metric("Entites resolues", str(nb_resolved))
+with col_er2:
+    st.metric("En attente de revue", str(nb_pending))
+with col_er3:
+    st.metric("Total mappings", str(nb_resolved + nb_pending))
 
 st.markdown("---")
 
