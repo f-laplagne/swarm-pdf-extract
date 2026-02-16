@@ -32,6 +32,7 @@ if not engine:
     init_db(engine)
 
 session = get_session(engine)
+config = st.session_state.get("config", {})
 
 # ---------------------------------------------------------------------------
 # Constants
