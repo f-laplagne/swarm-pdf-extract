@@ -1,169 +1,146 @@
-# 🐝 Swarm Claude Code — POC Extraction PDF Multi-Format
+# Swarm PDF Extract
 
-## Vision
+Multi-agent PDF extraction system with a Streamlit analytics dashboard. Built to evaluate automated data extraction from heterogeneous PDF documents (invoices, delivery notes, quotes) for a logistics/chemical industry client.
 
-Architecture **multi-agents orchestrée** utilisant Claude Code en mode swarm pour évaluer les capacités d'extraction d'information à partir de ~100 documents PDF hétérogènes (factures, BL, devis, etc.).
-
-**Objectif du pilote** : Définir les possibilités et les défis pour aider un architecte de solution à établir une méthode, les outils nécessaires, la durée et le budget d'une mission d'expertise.
-
----
-
-## Architecture Swarm
-
-```
-                    ┌─────────────────────────────┐
-                    │      🎯 ORCHESTRATOR         │
-                    │   (orchestrator.md)           │
-                    │   Coordination & Dispatch     │
-                    └──────────┬──────────────────┘
-                               │
-            ┌──────────────────┼──────────────────────┐
-            │                  │                       │
-            ▼                  ▼                       ▼
-  ┌─────────────────┐ ┌───────────────┐ ┌──────────────────────┐
-  │ 📄 CLASSIFIER   │ │ 🔍 EXTRACTOR │ │ 📊 ANALYZER          │
-  │ (classifier.md) │ │(extractor.md) │ │ (analyzer.md)        │
-  │                  │ │               │ │                      │
-  │ • Détecte type   │ │ • Extraction  │ │ • Qualité données    │
-  │   de document    │ │   structurée  │ │ • Patterns détectés  │
-  │ • Format PDF     │ │ • Multi-strat │ │ • Anomalies          │
-  │ • Langue         │ │   (text/table │ │ • Statistiques       │
-  │ • Complexité     │ │    /OCR/LLM)  │ │ • Scoring confiance  │
-  └────────┬─────────┘ └──────┬────────┘ └──────────┬───────────┘
-           │                  │                      │
-           ▼                  ▼                      ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │                   💾 OUTPUT LAYER                            │
-  │  output/extractions/  output/analyses/  output/reports/      │
-  │  (JSON structurés)    (scoring)         (synthèse finale)    │
-  └─────────────────────────────────────────────────────────────┘
-           │
-           ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │                  📋 REPORTER                                 │
-  │                 (reporter.md)                                 │
-  │  Synthèse finale : faisabilité, méthode, outils, budget     │
-  └─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Démarrage Rapide
-
-### Prérequis
-
-```bash
-# Claude Code installé (npm)
-npm install -g @anthropic-ai/claude-code
-
-# Python 3.11+ avec les dépendances
-pip install -r requirements.txt
-```
-
-### Utilisation
-
-```bash
-# 1. Placer vos PDFs dans samples/
-cp vos-factures/*.pdf samples/
-
-# 2. Lancer l'orchestrateur depuis Claude Code
-cd swarm-pdf-extract
-claude
-
-# 3. Dans Claude Code, charger le prompt orchestrateur :
-# > Lis le fichier CLAUDE.md et exécute le workflow complet sur les PDFs dans samples/
-```
-
-### Workflow pas-à-pas (manuel)
-
-```bash
-# Étape 1 : Classification de tous les PDFs
-# > Exécute le rôle de classifier (prompts/classifier.md) sur chaque PDF dans samples/
-
-# Étape 2 : Extraction des données structurées  
-# > Exécute le rôle d'extractor (prompts/extractor.md) en utilisant les résultats de classification
-
-# Étape 3 : Analyse qualité et patterns
-# > Exécute le rôle d'analyzer (prompts/analyzer.md) sur toutes les extractions
-
-# Étape 4 : Rapport de synthèse
-# > Exécute le rôle de reporter (prompts/reporter.md) pour le rapport final
-```
-
----
-
-## Structure du Projet
+## Architecture
 
 ```
 swarm-pdf-extract/
-├── CLAUDE.md                  # 🧠 Prompt système principal (orchestrateur)
-├── README.md                  # Ce fichier
-├── requirements.txt           # Dépendances Python
-├── pyproject.toml             # Config projet Python
-│
-├── prompts/                   # 🎭 Prompts des agents spécialisés
-│   ├── classifier.md          #   Agent de classification
-│   ├── extractor.md           #   Agent d'extraction
-│   ├── analyzer.md            #   Agent d'analyse qualité
-│   └── reporter.md            #   Agent de synthèse/rapport
-│
-├── schemas/                   # 📐 Schémas de données JSON
-│   ├── classification.json    #   Schéma de classification doc
-│   ├── extraction.json        #   Schéma d'extraction facture
-│   └── analysis.json          #   Schéma d'analyse qualité
-│
-├── tools/                     # 🔧 Scripts Python utilitaires
-│   ├── pdf_reader.py          #   Lecture multi-stratégie PDF
-│   ├── table_extractor.py     #   Extraction de tableaux
-│   ├── ocr_processor.py       #   OCR pour PDFs scannés
-│   ├── json_validator.py      #   Validation des sorties JSON
-│   └── batch_runner.py        #   Exécution batch sur N fichiers
-│
-├── scripts/                   # 🚀 Scripts d'orchestration
-│   ├── run_pipeline.sh        #   Pipeline complet
-│   ├── run_classification.sh  #   Classification seule
-│   └── run_extraction.sh      #   Extraction seule
-│
-├── config/                    # ⚙️ Configuration
-│   └── settings.yaml          #   Paramètres du POC
-│
-├── samples/                   # 📁 PDFs d'entrée (vos factures ici)
-│   └── .gitkeep
-│
-├── output/                    # 📤 Résultats produits
-│   ├── extractions/           #   JSON extraits par document
-│   ├── analyses/              #   Rapports d'analyse
-│   └── reports/               #   Rapport de synthèse final
-│
-└── tests/                     # ✅ Tests de validation
-    ├── test_extraction.py     #   Tests d'extraction
-    └── test_schemas.py        #   Tests de conformité schéma
+├── prompts/            # Agent prompts (classifier, extractor, analyzer, reporter)
+├── tools/              # PDF processing (pdfplumber, OCR, table extraction)
+├── schemas/            # JSON validation schemas
+├── dashboard/          # Streamlit analytics dashboard
+│   ├── analytics/      #   Purchasing, logistics, trends, quality modules
+│   ├── components/     #   Shared UI components (filters, charts)
+│   ├── data/           #   Models, ingestion, entity resolution, upload pipeline
+│   ├── pages/          #   8 dashboard pages
+│   └── tests/          #   174 tests
+├── samples/            # Input PDFs (not tracked)
+└── output/             # Extraction results (not tracked)
 ```
 
----
+### Extraction Pipeline
 
-## Champs Cibles (Factures)
+Four specialized agents coordinated by an orchestrator:
 
-| Champ | Description | Exemple |
-|-------|-------------|---------|
-| `type_matiere` | Type de matière / pièce | "Acier inox 304L", "Tube cuivre" |
-| `unite` | Unité de mesure | "kg", "mètre", "pièce", "lot" |
-| `prix_unitaire` | Prix unitaire HT | 12.50 |
-| `quantite` | Quantité | 100 |
-| `prix_total` | Prix total ligne HT | 1250.00 |
-| `date_depart` | Date de départ / expédition | "2025-01-15" |
-| `date_arrivee` | Date d'arrivée / livraison | "2025-01-17" |
-| `lieu_depart` | Lieu de départ | "Usine Lyon" |
-| `lieu_arrivee` | Lieu d'arrivée / livraison | "Chantier Bordeaux" |
+1. **Classifier** — Detects document type, PDF format, language, complexity
+2. **Extractor** — Structured data extraction (text, tables, OCR, LLM strategies)
+3. **Analyzer** — Quality scoring, pattern detection, field coverage analysis
+4. **Reporter** — Executive summary with feasibility, method, tools, budget recommendations
 
----
+### Analytics Dashboard
 
-## Métriques du POC
+Streamlit dashboard with 8 pages for exploring extracted data:
 
-Le rapport final évalue :
+| Page | Description |
+|------|-------------|
+| Tableau de bord | KPIs, document/line counts, entity resolution stats |
+| Achats | Supplier rankings, material pricing, cost optimization |
+| Logistique | Route analysis, OD matrix, delivery times, consolidation |
+| Anomalies | Data quality issues and validation rules |
+| Tendances | Price trends by material over time |
+| Qualite | Extraction confidence scores and coverage |
+| Admin | Data ingestion, PDF upload, DB stats, maintenance |
+| Entites | Entity resolution: mappings, manual merge, audit log, review queue |
 
-1. **Taux d'extraction** — % de champs extraits avec succès par type de document
-2. **Score de confiance** — Confiance moyenne par champ (0-1)
-3. **Couverture formats** — Nombre de formats PDF différents traités
-4. **Défis identifiés** — Catalogue des problèmes rencontrés
-5. **Recommandations** — Méthode, outils et budget pour industrialisation
+## Key Features
+
+### Entity Resolution
+
+Non-destructive entity deduplication — raw data stays intact, mappings applied at query time:
+
+- **Manual merge**: Select 2+ entity variants, assign canonical name (exact or prefix match)
+- **Auto-resolution**: Fuzzy matching (rapidfuzz) with configurable thresholds — high confidence auto-merges, medium confidence goes to review queue
+- **Material normalization**: Strips operational details after " - " separator, removes leading quantities
+- **Supplier normalization**: Case-folding, legal suffix removal (SA, SARL, SAS, GmbH, Ltd)
+- **Full audit trail**: Every merge logged, revertible at any time
+- **Backward compatible**: Zero mappings = identical behavior to pre-resolution code
+
+### PDF Upload
+
+- Drag-and-drop PDF upload with size validation
+- SHA-256 content hashing for duplicate detection
+- Upload history with status tracking (uploaded/processing/completed/failed)
+- Path traversal protection
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.11+
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (for running extraction agents)
+
+### Install & Run Dashboard
+
+```bash
+# Clone
+git clone https://github.com/f-laplagne/swarm-pdf-extract.git
+cd swarm-pdf-extract
+
+# Install dependencies
+pip install -r dashboard/requirements.txt
+
+# Run dashboard
+PYTHONPATH=. streamlit run dashboard/app.py
+```
+
+### Run Extraction Pipeline
+
+```bash
+# Install extraction dependencies
+pip install -r requirements.txt
+
+# Place PDFs in samples/
+cp your-invoices/*.pdf samples/
+
+# Launch Claude Code orchestrator
+claude
+# > Read CLAUDE.md and execute the full workflow on PDFs in samples/
+```
+
+### Run Tests
+
+```bash
+pip install -r dashboard/requirements.txt
+python -m pytest dashboard/tests/ -v
+# 174 passed, 1 skipped
+```
+
+## Target Schema (Invoices)
+
+Each invoice line extracts:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type_matiere` | string | Material or part type |
+| `unite` | string | Unit of measure (kg, m, piece, lot) |
+| `prix_unitaire` | number | Unit price excl. tax |
+| `quantite` | number | Quantity |
+| `prix_total` | number | Line total excl. tax |
+| `date_depart` | ISO 8601 | Departure / shipping date |
+| `date_arrivee` | ISO 8601 | Arrival / delivery date |
+| `lieu_depart` | string | Origin location |
+| `lieu_arrivee` | string | Destination location |
+
+## Configuration
+
+Dashboard configuration in `dashboard/config.yaml`:
+
+```yaml
+upload:
+  directory: "data/uploads"
+  max_file_size_mb: 50
+
+entity_resolution:
+  auto_merge_threshold: 0.90    # >= auto-merge
+  review_threshold: 0.50        # >= pending review
+  fuzzy_min_score: 50
+```
+
+## Tech Stack
+
+- **Extraction**: pdfplumber, pytesseract, pdf2image, OpenCV
+- **Dashboard**: Streamlit, Plotly, Pandas
+- **Database**: SQLAlchemy + SQLite
+- **Entity resolution**: rapidfuzz, geopy
+- **Testing**: pytest (174 tests)
