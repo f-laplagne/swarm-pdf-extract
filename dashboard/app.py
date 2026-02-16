@@ -38,5 +38,6 @@ st.markdown("""
 - **Anomalies** -- Detection d'incoherences et doublons
 - **Tendances** -- Evolution temporelle des prix et volumes
 - **Qualite** -- Suivi de la qualite des donnees extraites
+- **Transport** -- Visualisation des routes d'expedition sur carte
 - **Admin** -- Ingestion et configuration
 """)

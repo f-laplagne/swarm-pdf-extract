@@ -20,6 +20,10 @@ openpyxl>=3.1.0
 # Geocoding (logistics module)
 geopy>=2.4.0
 
+# Map visualization (transport module)
+folium>=0.17.0
+streamlit-folium>=0.22.0
+
 # Fuzzy matching (entity enrichment)
 rapidfuzz>=3.0.0
 
