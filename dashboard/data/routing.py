@@ -2,6 +2,12 @@
 
 Uses Nominatim (via geopy) for geocoding with a local JSON file cache,
 and the OSRM demo server for driving route calculation (no API key needed).
+
+Location strings from invoices typically follow these patterns:
+    "COMPANY, City (dept)"       -> "COMPANY, City, France" then "City, France"
+    "Company, PostalCode City"   -> "Company, City, France" then "City, France"
+    "City (PostalCode)"          -> "City, France"
+    "City"                       -> "City, France"
 """
 
 from __future__ import annotations
@@ -19,16 +25,39 @@ _CACHE_PATH = os.path.join(os.path.dirname(__file__), "geocode_cache.json")
 _OSRM_BASE = "https://router.project-osrm.org/route/v1/driving"
 
 
-def _clean_location_name(name: str) -> str:
-    """Strip postal code parentheticals and extra whitespace.
+def parse_location(name: str) -> tuple[str | None, str]:
+    """Parse a raw location string into (company, city).
 
-    Examples:
-        "Sorgues (F-84706)" -> "Sorgues"
-        "Dunkerque (59140)" -> "Dunkerque"
-        "Lyon (FR)" -> "Lyon"
-        "Saint-Etienne" -> "Saint-Etienne"
+    Handles formats found in French transport invoices:
+        "EURENCO, Sorgues (84)"           -> ("EURENCO", "Sorgues")
+        "TRS Capdeville, 24 Lalinde"      -> ("TRS Capdeville", "Lalinde")
+        "Eurenco, 24 Bergerac"            -> ("Eurenco", "Bergerac")
+        "ARIANEGROUP, Les Mureaux (78)"   -> ("ARIANEGROUP", "Les Mureaux")
+        "Kallo (Beveren-Kallo)"           -> (None, "Kallo")
+        "Fos Sur Mer"                     -> (None, "Fos Sur Mer")
+        "Sorgues"                         -> (None, "Sorgues")
+        "BASE AERIENNE 702, Avord (18)"   -> ("BASE AERIENNE 702", "Avord")
+        "Manuco, 24 Bergerac"             -> ("Manuco", "Bergerac")
     """
-    # Remove parenthetical content like (F-84706), (59140), (FR)
+    # Strip parenthetical content: (84), (F-84706), (Beveren-Kallo), etc.
+    cleaned = re.sub(r"\s*\([^)]*\)\s*", "", name).strip()
+
+    if "," in cleaned:
+        # Split on first comma: "COMPANY, [postal] City"
+        company_part, city_part = cleaned.split(",", 1)
+        company = company_part.strip()
+        city_part = city_part.strip()
+        # Strip leading French postal code (1-5 digits): "24 Bergerac" -> "Bergerac"
+        city = re.sub(r"^\d{1,5}\s+", "", city_part).strip()
+        return (company, city) if city else (None, company)
+
+    # No comma: plain city name
+    return (None, cleaned)
+
+
+# Keep for backward compatibility with tests
+def _clean_location_name(name: str) -> str:
+    """Strip postal code parentheticals and extra whitespace (legacy)."""
     cleaned = re.sub(r"\s*\([^)]*\)\s*", "", name)
     return cleaned.strip()
 
@@ -45,33 +74,57 @@ def _save_cache(cache: dict[str, list[float] | None]) -> None:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
+def _nominatim_geocode(query: str) -> tuple[float, float] | None:
+    """Single Nominatim geocode attempt. Returns (lat, lon) or None."""
+    try:
+        geolocator = Nominatim(user_agent="rationalize-dashboard", timeout=10)
+        location = geolocator.geocode(query)
+        if location:
+            return (location.latitude, location.longitude)
+    except (GeocoderTimedOut, GeocoderUnavailable, Exception):
+        pass
+    return None
+
+
 def geocode_location(name: str) -> tuple[float, float] | None:
     """Geocode a location name to (latitude, longitude).
 
+    Strategy (multi-step with fallback):
+        1. Check cache for the raw name
+        2. Parse into (company, city)
+        3. Try "Company, City, France" (precise site location)
+        4. Fallback to "City, France" (city-level)
+
     Results are cached in a JSON file to avoid repeated Nominatim calls.
-    Returns None if geocoding fails.
+    Returns None if all attempts fail.
     """
-    cleaned = _clean_location_name(name)
     cache = _load_cache()
 
-    if cleaned in cache:
-        val = cache[cleaned]
+    # Check cache first (keyed on raw name)
+    if name in cache:
+        val = cache[name]
         return tuple(val) if val is not None else None
 
-    try:
-        geolocator = Nominatim(user_agent="rationalize-dashboard", timeout=10)
-        location = geolocator.geocode(cleaned)
-        if location:
-            coords = [location.latitude, location.longitude]
-            cache[cleaned] = coords
-            _save_cache(cache)
-            return (coords[0], coords[1])
-        else:
-            cache[cleaned] = None
-            _save_cache(cache)
-            return None
-    except (GeocoderTimedOut, GeocoderUnavailable, Exception):
-        return None
+    company, city = parse_location(name)
+
+    coords = None
+
+    # Strategy 1: try "Company, City, France" for precise company site
+    if company:
+        coords = _nominatim_geocode(f"{company}, {city}, France")
+
+    # Strategy 2: fallback to "City, France"
+    if coords is None:
+        coords = _nominatim_geocode(f"{city}, France")
+
+    # Strategy 3: last resort — just the city name without country
+    if coords is None and city:
+        coords = _nominatim_geocode(city)
+
+    # Cache the result (even None to avoid retrying)
+    cache[name] = list(coords) if coords else None
+    _save_cache(cache)
+    return coords
 
 
 def _decode_polyline(encoded: str) -> list[tuple[float, float]]:

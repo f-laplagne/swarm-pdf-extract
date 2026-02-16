@@ -1,7 +1,7 @@
 """Tests for dashboard.data.routing — geocoding and OSRM utilities."""
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
 import pytest
 
@@ -10,10 +10,48 @@ from dashboard.data.routing import (
     _decode_polyline,
     geocode_location,
     get_osrm_route,
+    parse_location,
 )
 
 
-# --- _clean_location_name ---
+# --- parse_location ---
+
+
+@pytest.mark.parametrize("raw,expected_company,expected_city", [
+    ("EURENCO, Sorgues (84)", "EURENCO", "Sorgues"),
+    ("EURENCO, Saint-Martin-de-Crau (13)", "EURENCO", "Saint-Martin-de-Crau"),
+    ("TRS Capdeville, 24 Lalinde", "TRS Capdeville", "Lalinde"),
+    ("Eurenco, 24 Bergerac", "Eurenco", "Bergerac"),
+    ("Manuco, 24 Bergerac", "Manuco", "Bergerac"),
+    ("ARIANEGROUP, Les Mureaux (78)", "ARIANEGROUP", "Les Mureaux"),
+    ("ARIANEGROUP CRB, Vert-le-Petit (91)", "ARIANEGROUP CRB", "Vert-le-Petit"),
+    ("BASE AERIENNE 702, Avord (18)", "BASE AERIENNE 702", "Avord"),
+    ("THALES, La Ferté-Saint-Aubin (45)", "THALES", "La Ferté-Saint-Aubin"),
+    ("MBDA FRANCE, Selles-Saint-Denis (41)", "MBDA FRANCE", "Selles-Saint-Denis"),
+    ("CEA, Gramat (46)", "CEA", "Gramat"),
+    ("ISL, Baldersheim (68)", "ISL", "Baldersheim"),
+    ("SIMU, Guipavas (29)", "SIMU", "Guipavas"),
+    ("NEXTER MUNITIONS, Bourges (18)", "NEXTER MUNITIONS", "Bourges"),
+])
+def test_parse_location_with_company(raw, expected_company, expected_city):
+    company, city = parse_location(raw)
+    assert company == expected_company
+    assert city == expected_city
+
+
+@pytest.mark.parametrize("raw,expected_city", [
+    ("Sorgues", "Sorgues"),
+    ("Fos Sur Mer", "Fos Sur Mer"),
+    ("Kallo", "Kallo"),
+    ("Kallo (Beveren-Kallo)", "Kallo"),
+])
+def test_parse_location_city_only(raw, expected_city):
+    company, city = parse_location(raw)
+    assert company is None
+    assert city == expected_city
+
+
+# --- _clean_location_name (legacy) ---
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -46,42 +84,92 @@ def test_decode_polyline():
 
 @patch("dashboard.data.routing._save_cache")
 @patch("dashboard.data.routing._load_cache", return_value={})
-@patch("dashboard.data.routing.Nominatim")
-def test_geocode_location_success(mock_nominatim_cls, mock_load, mock_save):
-    mock_location = MagicMock()
-    mock_location.latitude = 43.95
-    mock_location.longitude = 4.87
-    mock_geolocator = MagicMock()
-    mock_geolocator.geocode.return_value = mock_location
-    mock_nominatim_cls.return_value = mock_geolocator
+@patch("dashboard.data.routing._nominatim_geocode")
+def test_geocode_company_site_found(mock_geocode, mock_load, mock_save):
+    """When company+city query succeeds, use that result."""
+    mock_geocode.return_value = (43.95, 4.87)
 
-    result = geocode_location("Sorgues (F-84706)")
+    result = geocode_location("EURENCO, Sorgues (84)")
     assert result == (43.95, 4.87)
-    # Should have been called with cleaned name
-    mock_geolocator.geocode.assert_called_once_with("Sorgues")
+    # Should try "EURENCO, Sorgues, France" first
+    mock_geocode.assert_called_once_with("EURENCO, Sorgues, France")
     mock_save.assert_called_once()
-
-
-@patch("dashboard.data.routing._save_cache")
-@patch("dashboard.data.routing._load_cache", return_value={"Lyon": [45.76, 4.83]})
-def test_geocode_location_cached(mock_load, mock_save):
-    result = geocode_location("Lyon (FR)")
-    assert result == (45.76, 4.83)
-    # Should NOT save again for cached result
-    mock_save.assert_not_called()
 
 
 @patch("dashboard.data.routing._save_cache")
 @patch("dashboard.data.routing._load_cache", return_value={})
-@patch("dashboard.data.routing.Nominatim")
-def test_geocode_location_not_found(mock_nominatim_cls, mock_load, mock_save):
-    mock_geolocator = MagicMock()
-    mock_geolocator.geocode.return_value = None
-    mock_nominatim_cls.return_value = mock_geolocator
+@patch("dashboard.data.routing._nominatim_geocode")
+def test_geocode_fallback_to_city(mock_geocode, mock_load, mock_save):
+    """When company+city fails, fall back to city+France."""
+    mock_geocode.side_effect = [None, (44.85, 0.48)]
+
+    result = geocode_location("Eurenco, 24 Bergerac")
+    assert result == (44.85, 0.48)
+    assert mock_geocode.call_count == 2
+    mock_geocode.assert_any_call("Eurenco, Bergerac, France")
+    mock_geocode.assert_any_call("Bergerac, France")
+
+
+@patch("dashboard.data.routing._save_cache")
+@patch("dashboard.data.routing._load_cache", return_value={})
+@patch("dashboard.data.routing._nominatim_geocode")
+def test_geocode_city_only(mock_geocode, mock_load, mock_save):
+    """Plain city name: no company step, goes straight to city+France."""
+    mock_geocode.return_value = (43.24, 5.05)
+
+    result = geocode_location("Fos Sur Mer")
+    assert result == (43.24, 5.05)
+    mock_geocode.assert_called_once_with("Fos Sur Mer, France")
+
+
+@patch("dashboard.data.routing._save_cache")
+@patch("dashboard.data.routing._load_cache", return_value={})
+@patch("dashboard.data.routing._nominatim_geocode")
+def test_geocode_last_resort_no_country(mock_geocode, mock_load, mock_save):
+    """When city+France fails, try just the city name."""
+    # No company → 2 calls only: "Kallo, France" then "Kallo"
+    mock_geocode.side_effect = [None, (51.22, 4.27)]
+
+    result = geocode_location("Kallo")
+    assert result == (51.22, 4.27)
+    assert mock_geocode.call_count == 2
+    mock_geocode.assert_any_call("Kallo, France")
+    mock_geocode.assert_any_call("Kallo")
+
+
+@patch("dashboard.data.routing._save_cache")
+@patch("dashboard.data.routing._load_cache", return_value={})
+@patch("dashboard.data.routing._nominatim_geocode")
+def test_geocode_all_attempts_fail(mock_geocode, mock_load, mock_save):
+    """When all strategies fail, return None and cache it."""
+    mock_geocode.return_value = None
 
     result = geocode_location("UnknownPlace12345")
     assert result is None
     mock_save.assert_called_once()
+    # Verify None is cached for the raw name
+    cached = mock_save.call_args[0][0]
+    assert cached["UnknownPlace12345"] is None
+
+
+@patch("dashboard.data.routing._save_cache")
+@patch("dashboard.data.routing._load_cache",
+       return_value={"EURENCO, Sorgues (84)": [43.95, 4.87]})
+def test_geocode_location_cached(mock_load, mock_save):
+    """Cached results are returned without any Nominatim calls."""
+    result = geocode_location("EURENCO, Sorgues (84)")
+    assert result == (43.95, 4.87)
+    mock_save.assert_not_called()
+
+
+@patch("dashboard.data.routing._save_cache")
+@patch("dashboard.data.routing._load_cache",
+       return_value={"Kallo": None})
+def test_geocode_location_cached_none(mock_load, mock_save):
+    """Cached None results are returned without retrying."""
+    result = geocode_location("Kallo")
+    assert result is None
+    mock_save.assert_not_called()
 
 
 # --- get_osrm_route ---

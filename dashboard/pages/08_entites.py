@@ -238,12 +238,31 @@ with tab_merge:
             key="merge_multiselect",
         )
 
-        default_canonical = selected_values[0] if selected_values else ""
-        canonical_name = st.text_input(
-            "Nom canonique",
-            value=default_canonical,
-            key="merge_canonical_input",
+        # Primary: pick one of the selected values as merge target
+        if len(selected_values) >= 2:
+            chosen_value = st.selectbox(
+                "Conserver sous le nom",
+                options=selected_values,
+                key="merge_chosen_value",
+                help="Les autres valeurs seront fusionnees vers celle-ci.",
+            )
+        else:
+            chosen_value = selected_values[0] if selected_values else ""
+
+        # Optional: override with a custom canonical name
+        use_custom = st.checkbox(
+            "Utiliser un nom personnalise a la place",
+            key="merge_use_custom",
         )
+        custom_canonical = ""
+        if use_custom:
+            custom_canonical = st.text_input(
+                "Nom personnalise",
+                value="",
+                key="merge_canonical_input",
+            )
+
+        canonical_name = custom_canonical.strip() if use_custom and custom_canonical.strip() else chosen_value
 
         match_mode = st.radio(
             "Mode de correspondance",
@@ -260,15 +279,16 @@ with tab_merge:
             height=80,
         )
 
-        can_merge = len(selected_values) >= 2 and canonical_name.strip()
+        can_merge = len(selected_values) >= 2 and canonical_name
 
         if can_merge:
+            st.info(f"Resultat : les valeurs seront fusionnees vers **{canonical_name}**")
             if st.button("Fusionner", key="btn_merge", type="primary"):
                 try:
                     audit = merge_entities(
                         session=session,
                         entity_type=merge_type,
-                        canonical=canonical_name.strip(),
+                        canonical=canonical_name,
                         raw_values=selected_values,
                         match_mode=match_mode_val,
                         source="manual",
@@ -278,13 +298,13 @@ with tab_merge:
                     )
                     st.success(
                         f"Fusion reussie ! {len(selected_values)} valeurs fusionnees "
-                        f"vers '{canonical_name.strip()}' (audit #{audit.id})."
+                        f"vers '{canonical_name}' (audit #{audit.id})."
                     )
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Erreur lors de la fusion : {exc}")
         else:
-            st.info("Selectionnez au moins 2 valeurs et saisissez un nom canonique.")
+            st.info("Selectionnez au moins 2 valeurs a fusionner.")
     else:
         st.info("Aucune valeur brute trouvee pour ce type d'entite.")
 
