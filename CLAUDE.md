@@ -14,14 +14,14 @@ Multi-agent POC for automated data extraction from heterogeneous PDFs (invoices,
 # Run all tests (root-level extraction tests)
 pytest tests/
 
-# Run all dashboard tests
-pytest dashboard/tests/
+# Run all dashboard tests (PYTHONPATH required for dashboard.* imports)
+PYTHONPATH=. pytest dashboard/tests/
 
 # Run a single test file
-pytest dashboard/tests/test_entity_resolution.py
+PYTHONPATH=. pytest dashboard/tests/test_entity_resolution.py
 
 # Run a single test
-pytest dashboard/tests/test_achats.py::TestAchats::test_top_fournisseurs -v
+PYTHONPATH=. pytest dashboard/tests/test_achats.py -k test_top_fournisseurs -v
 
 # Run the Streamlit dashboard
 cd dashboard && streamlit run app.py
