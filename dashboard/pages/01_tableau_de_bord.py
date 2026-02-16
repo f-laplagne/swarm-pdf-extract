@@ -16,8 +16,9 @@ st.title("\U0001F3E0 Tableau de bord")
 
 engine = st.session_state.get("engine")
 if not engine:
-    st.error("Base de donnees non initialisee. Lancez l'application depuis app.py.")
-    st.stop()
+    from dashboard.data.db import get_engine, init_db
+    engine = get_engine()
+    init_db(engine)
 
 session = get_session(engine)
 

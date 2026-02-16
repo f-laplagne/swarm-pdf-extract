@@ -15,8 +15,9 @@ st.title("\u26A0\uFE0F Detection d'Anomalies")
 engine = st.session_state.get("engine")
 config = st.session_state.get("config", {})
 if not engine:
-    st.error("DB non initialisee.")
-    st.stop()
+    from dashboard.data.db import get_engine, init_db
+    engine = get_engine()
+    init_db(engine)
 
 session = get_session(engine)
 

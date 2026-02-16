@@ -17,7 +17,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.yaml")
 with open(CONFIG_PATH) as f:
     config = yaml.safe_load(f)
 
-# Init DB
+# Init DB — db.py resolves relative sqlite paths from dashboard dir
 engine = get_engine(config["database"]["url"])
 init_db(engine)
 

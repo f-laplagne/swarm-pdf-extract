@@ -12,8 +12,9 @@ st.title("\U0001F69B Optimisation Logistique")
 
 engine = st.session_state.get("engine")
 if not engine:
-    st.error("DB non initialisee.")
-    st.stop()
+    from dashboard.data.db import get_engine, init_db
+    engine = get_engine()
+    init_db(engine)
 
 session = get_session(engine)
 
