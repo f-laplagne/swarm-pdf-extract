@@ -66,6 +66,14 @@ ui:
   page_icon: "\U0001F4CA"
   layout: "wide"
 
+# Entity resolution auto-merge settings
+entity_resolution:
+  auto_merge_threshold: 0.90
+  review_threshold: 0.50
+  geocoding_provider: "nominatim"
+  geocoding_user_agent: "rationalize-dashboard"
+  fuzzy_min_score: 50
+
 # Confidence thresholds (from parent project)
 confidence:
   minimum: 0.3
