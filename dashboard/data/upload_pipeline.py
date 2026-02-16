@@ -7,7 +7,6 @@ and optional text extraction when tools/pdf_reader.py is available.
 import hashlib
 import json
 import os
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 

@@ -1,3 +1,4 @@
+import hashlib
 import streamlit as st
 import os
 import pandas as pd
@@ -86,8 +87,6 @@ with tab_upload:
                 continue
 
             # --- Duplicate check via hash ---
-            import hashlib
-
             content_hash = hashlib.sha256(file_bytes).hexdigest()
             existing = check_duplicate(session, content_hash)
             if existing is not None:
