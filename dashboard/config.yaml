@@ -9,6 +9,12 @@ redis:
 ingestion:
   extractions_dir: "../output/extractions"
 
+# PDF upload settings
+upload:
+  directory: "data/uploads"
+  max_file_size_mb: 50
+  allowed_types: ["application/pdf"]
+
 # Anomaly detection thresholds
 anomalies:
   regles:
