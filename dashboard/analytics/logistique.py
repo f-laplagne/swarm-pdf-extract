@@ -3,9 +3,14 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from dashboard.data.models import LigneFacture
+from dashboard.data.entity_resolution import get_mappings, get_prefix_mappings, resolve_column
 
 
 def _lignes_logistiques(session: Session) -> pd.DataFrame:
+    """Query logistics lines and resolve location names via entity resolution.
+
+    Produces ``resolved_lieu_depart`` and ``resolved_lieu_arrivee`` columns.
+    """
     lignes = (
         session.query(
             LigneFacture.lieu_depart, LigneFacture.lieu_arrivee,
@@ -19,15 +24,23 @@ def _lignes_logistiques(session: Session) -> pd.DataFrame:
         )
         .all()
     )
-    return pd.DataFrame(lignes, columns=[
+    df = pd.DataFrame(lignes, columns=[
         "lieu_depart", "lieu_arrivee", "date_depart", "date_arrivee",
         "prix_total", "type_matiere", "quantite",
     ])
 
+    # Entity resolution on location columns
+    mappings_loc = get_mappings(session, "location")
+    prefix_loc = get_prefix_mappings(session, "location")
+    resolve_column(df, "lieu_depart", mappings_loc, prefix_loc)
+    resolve_column(df, "lieu_arrivee", mappings_loc, prefix_loc)
+
+    return df
+
 
 def top_routes(session: Session, limit: int = 5) -> pd.DataFrame:
     df = _lignes_logistiques(session)
-    df["route"] = df["lieu_depart"] + " \u2192 " + df["lieu_arrivee"]
+    df["route"] = df["resolved_lieu_depart"] + " \u2192 " + df["resolved_lieu_arrivee"]
     result = (
         df.groupby("route")
         .agg(nb_trajets=("route", "count"), cout_total=("prix_total", "sum"))
@@ -40,7 +53,7 @@ def top_routes(session: Session, limit: int = 5) -> pd.DataFrame:
 
 def matrice_od(session: Session) -> pd.DataFrame:
     df = _lignes_logistiques(session)
-    return pd.crosstab(df["lieu_depart"], df["lieu_arrivee"])
+    return pd.crosstab(df["resolved_lieu_depart"], df["resolved_lieu_arrivee"])
 
 
 def delai_moyen_livraison(session: Session) -> dict:
@@ -64,7 +77,7 @@ def delai_moyen_livraison(session: Session) -> dict:
 def opportunites_regroupement(session: Session, fenetre_jours: int = 7) -> pd.DataFrame:
     df = _lignes_logistiques(session)
     df = df.dropna(subset=["date_depart"])
-    df["route"] = df["lieu_depart"] + " \u2192 " + df["lieu_arrivee"]
+    df["route"] = df["resolved_lieu_depart"] + " \u2192 " + df["resolved_lieu_arrivee"]
     df["depart"] = pd.to_datetime(df["date_depart"])
 
     results = []

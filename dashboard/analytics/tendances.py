@@ -22,15 +22,33 @@ def volume_mensuel(session: Session) -> pd.DataFrame:
     return result
 
 
-def evolution_prix_matiere(session: Session, type_matiere: str) -> pd.DataFrame:
+def evolution_prix_matiere(
+    session: Session, type_matiere: str, raw_values: list[str] | None = None,
+) -> pd.DataFrame:
+    """Price evolution over time for a given material type.
+
+    Parameters
+    ----------
+    type_matiere:
+        The canonical material name.
+    raw_values:
+        Optional list of raw DB values (from ``expand_canonical()``) to match
+        with an ``IN`` clause.  When *None*, an exact ``==`` filter is used.
+    """
+    query = session.query(
+        LigneFacture.date_depart,
+        LigneFacture.prix_unitaire,
+        LigneFacture.quantite,
+    )
+
+    if raw_values is not None:
+        query = query.filter(LigneFacture.type_matiere.in_(raw_values))
+    else:
+        query = query.filter(LigneFacture.type_matiere == type_matiere)
+
     rows = (
-        session.query(
-            LigneFacture.date_depart,
-            LigneFacture.prix_unitaire,
-            LigneFacture.quantite,
-        )
+        query
         .filter(
-            LigneFacture.type_matiere == type_matiere,
             LigneFacture.date_depart.isnot(None),
             LigneFacture.prix_unitaire.isnot(None),
         )

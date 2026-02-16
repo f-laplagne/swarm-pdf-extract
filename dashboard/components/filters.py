@@ -2,11 +2,12 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from dashboard.data.models import Fournisseur, Document, LigneFacture
+from dashboard.data.models import Document
+from dashboard.data.entity_resolution import get_distinct_values
 
 
 def sidebar_filters(session: Session) -> dict:
-    """Render common sidebar filters and return selected values."""
+    """Render common sidebar filters and return selected (canonical) values."""
     st.sidebar.header("Filtres")
 
     # Date range
@@ -25,15 +26,13 @@ def sidebar_filters(session: Session) -> dict:
     else:
         date_range = None
 
-    # Fournisseur
-    fournisseurs = [f[0] for f in session.query(Fournisseur.nom).order_by(Fournisseur.nom).all()]
+    # Fournisseur — canonical names via entity resolution
+    fournisseurs = get_distinct_values(session, "supplier")
     selected_fournisseurs = st.sidebar.multiselect("Fournisseur", fournisseurs, default=fournisseurs)
 
-    # Type matiere
-    matieres = [m[0] for m in session.query(LigneFacture.type_matiere).distinct().filter(
-        LigneFacture.type_matiere.isnot(None)
-    ).all()]
-    selected_matieres = st.sidebar.multiselect("Type matiere", sorted(matieres), default=sorted(matieres))
+    # Type matiere — canonical names via entity resolution
+    matieres = get_distinct_values(session, "material")
+    selected_matieres = st.sidebar.multiselect("Type matiere", matieres, default=matieres)
 
     return {
         "date_range": date_range,
