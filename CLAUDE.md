@@ -1,137 +1,104 @@
-# CLAUDE.md — Orchestrateur Swarm PDF Extract
+# CLAUDE.md
 
-Tu es l'**orchestrateur principal** d'un système multi-agents pour l'extraction d'informations à partir de documents PDF multi-format. Tu coordonnes 4 agents spécialisés pour évaluer les capacités d'extraction sur ~100 documents.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Contexte Mission
+## Project Overview
 
-**Client** : Architecte de solution / CTO
-**Objectif** : POC pour évaluer les possibilités et défis d'extraction automatique de données depuis des PDFs hétérogènes (factures, BL, devis...) afin de définir méthode, outils, durée et budget d'une mission d'expertise.
+Multi-agent POC for automated data extraction from heterogeneous PDFs (invoices, delivery notes, quotes) with a Streamlit analytics dashboard. Two main subsystems: an **extraction pipeline** (Python tools + 4 LLM agent prompts) and a **Streamlit dashboard** ("Rationalize") with SQLite/SQLAlchemy storage, entity resolution, and anomaly detection.
 
-## Tes Agents
+**Language**: French-first codebase (variable names, comments, UI labels, agent prompts). Python 3.11+.
 
-Tu disposes de 4 agents spécialisés dont les prompts sont dans `prompts/` :
-
-| Agent | Fichier | Rôle |
-|-------|---------|------|
-| **Classifier** | `prompts/classifier.md` | Analyse et classifie chaque PDF (type, format, langue, complexité) |
-| **Extractor** | `prompts/extractor.md` | Extrait les données structurées selon le schéma cible |
-| **Analyzer** | `prompts/analyzer.md` | Évalue la qualité des extractions et identifie les patterns |
-| **Reporter** | `prompts/reporter.md` | Produit le rapport de synthèse final |
-
-## Workflow d'Orchestration
-
-### Phase 1 : Préparation
-```
-1. Lister tous les PDFs dans samples/
-2. Vérifier que les dépendances Python sont installées (pip install -r requirements.txt)
-3. Créer les répertoires output/ s'ils n'existent pas
-```
-
-### Phase 2 : Classification (Agent Classifier)
-```
-Pour chaque PDF dans samples/ :
-  1. Exécuter python tools/pdf_reader.py <fichier.pdf> pour extraire le texte brut
-  2. Appliquer le prompt prompts/classifier.md pour classifier le document
-  3. Sauvegarder le résultat dans output/extractions/<nom>_classification.json
-  4. Valider avec python tools/json_validator.py <fichier> schemas/classification.json
-```
-
-### Phase 3 : Extraction (Agent Extractor)
-```
-Pour chaque PDF classifié :
-  1. Lire la classification depuis output/extractions/<nom>_classification.json
-  2. Choisir la stratégie d'extraction selon le type détecté :
-     - PDF texte natif → pdfplumber (extraction directe)
-     - PDF scanné → OCR via tools/ocr_processor.py
-     - PDF avec tableaux → tools/table_extractor.py
-     - PDF complexe/mixte → Combinaison des stratégies + analyse LLM
-  3. Appliquer le prompt prompts/extractor.md avec le texte extrait
-  4. Sauvegarder dans output/extractions/<nom>_extraction.json
-  5. Valider contre schemas/extraction.json
-```
-
-### Phase 4 : Analyse (Agent Analyzer)
-```
-1. Charger TOUTES les extractions depuis output/extractions/*_extraction.json
-2. Appliquer le prompt prompts/analyzer.md
-3. Produire :
-   - output/analyses/quality_report.json (scoring par document)
-   - output/analyses/field_coverage.json (couverture par champ)
-   - output/analyses/challenges.json (défis identifiés)
-   - output/analyses/patterns.json (patterns détectés)
-```
-
-### Phase 5 : Rapport (Agent Reporter)
-```
-1. Charger tous les résultats d'analyse depuis output/analyses/
-2. Appliquer le prompt prompts/reporter.md
-3. Produire output/reports/poc_synthesis.md — le rapport final contenant :
-   - Résumé exécutif
-   - Résultats quantifiés
-   - Défis et limites
-   - Recommandations : méthode, outils, durée, budget
-   - Prochaines étapes
-```
-
-## Règles d'Orchestration
-
-1. **Toujours lire le prompt de l'agent** avant de jouer son rôle (fichier dans prompts/)
-2. **Valider chaque sortie JSON** contre le schéma correspondant dans schemas/
-3. **En cas d'échec d'extraction** : noter l'échec avec la raison, ne pas bloquer le pipeline
-4. **Tracer chaque étape** : log dans output/pipeline_log.json
-5. **Exécuter les scripts Python** pour le travail lourd (extraction texte, OCR, tableaux)
-6. **Ton rôle d'IA** : interpréter, structurer, analyser ce que les scripts Python extraient
-
-## Commandes Utilitaires
+## Commands
 
 ```bash
-# Lire un PDF et obtenir le texte brut
-python tools/pdf_reader.py samples/facture1.pdf
+# Run all tests (root-level extraction tests)
+pytest tests/
 
-# Extraire les tableaux d'un PDF
-python tools/table_extractor.py samples/facture1.pdf
+# Run all dashboard tests
+pytest dashboard/tests/
 
-# OCR sur un PDF scanné
-python tools/ocr_processor.py samples/facture_scan.pdf
+# Run a single test file
+pytest dashboard/tests/test_entity_resolution.py
 
-# Valider un JSON contre un schéma
-python tools/json_validator.py output/extractions/facture1_extraction.json schemas/extraction.json
+# Run a single test
+pytest dashboard/tests/test_achats.py::TestAchats::test_top_fournisseurs -v
 
-# Lancer le batch complet
-python tools/batch_runner.py samples/ output/
+# Run the Streamlit dashboard
+cd dashboard && streamlit run app.py
+
+# Start Docker services (PaddleOCR + Redis + dashboard)
+docker compose up
+
+# PDF extraction tools
+python tools/pdf_reader.py samples/facture1.pdf                    # text extraction (auto strategy)
+python tools/pdf_reader.py samples/scan.pdf --strategy ocr         # force OCR
+python tools/table_extractor.py samples/facture1.pdf               # table extraction
+python tools/ocr_processor.py samples/scan.pdf                     # Tesseract OCR
+python tools/json_validator.py output/extractions/f.json schemas/extraction.json  # validate JSON
+python tools/batch_runner.py samples/ output/                      # batch all PDFs
+
+# Install dependencies
+pip install -r requirements.txt              # extraction tools
+pip install -r dashboard/requirements.txt    # dashboard
 ```
 
-## Schéma de Données Cible (Factures)
+## Architecture
 
-Les champs à extraire pour chaque ligne de facture :
+### Extraction Pipeline
 
-```json
-{
-  "type_matiere": "string — Type de matière ou pièce",
-  "unite": "string — Unité de mesure (kg, m, pièce, lot...)",
-  "prix_unitaire": "number — Prix unitaire HT",
-  "quantite": "number — Quantité",
-  "prix_total": "number — Prix total de la ligne HT",
-  "date_depart": "string (ISO 8601) — Date de départ / expédition",
-  "date_arrivee": "string (ISO 8601) — Date d'arrivée / livraison",
-  "lieu_depart": "string — Lieu de départ / expédition",
-  "lieu_arrivee": "string — Lieu d'arrivée / livraison"
-}
+4 LLM agents orchestrated sequentially. Agent prompts live in `prompts/` (read them before invoking an agent role). JSON schemas for validation in `schemas/`.
+
+```
+samples/*.pdf → tools/pdf_reader.py → Agent Classifier → Agent Extractor → output/extractions/
+                                                                              ↓
+                                                           Agent Analyzer → output/analyses/
+                                                                              ↓
+                                                           Agent Reporter → output/reports/
 ```
 
-## Mode Démarrage Rapide (5 factures)
+**Extraction strategies** (auto-detected by `pdf_reader.py`): pdfplumber for native text, Tesseract OCR for scans, PaddleOCR PP-StructureV3 for tables, MLX VLM for Apple Silicon GPU. Fallback chain: pdfplumber → PaddleOCR → MLX → Tesseract.
 
-Si l'utilisateur n'a que 5 PDFs, exécute le workflow en mode direct :
-1. Lancer la Phase 2 + 3 combinées (classifier et extraire dans la même passe)
-2. Sauter la Phase 4 en mode batch, faire une analyse directe
-3. Produire un rapport de synthèse condensé
+**Target extraction fields** per invoice line: `type_matiere`, `unite`, `prix_unitaire`, `quantite`, `prix_total`, `date_depart`, `date_arrivee`, `lieu_depart`, `lieu_arrivee`. Each field has a confidence score (0-1). Thresholds: 0.3 minimum, 0.6 document success, 0.8 reliable.
 
-## Gestion d'Erreurs
+### Dashboard (`dashboard/`)
 
-| Erreur | Action |
-|--------|--------|
-| PDF protégé par mot de passe | Log + skip, noter dans le rapport |
-| PDF corrompu | Log + skip |
-| Extraction vide (0 champs) | Tenter stratégie alternative (OCR si texte échoue) |
-| Confiance < 0.3 sur un champ | Marquer comme "incertain" dans le JSON |
-| Schéma invalide | Corriger et re-valider |
+Streamlit app with 8 pages. Entry point: `dashboard/app.py`. Config: `dashboard/config.yaml`.
+
+**Data flow**: `app.py` initializes SQLite engine → stores in `st.session_state` → pages import engine from session state → analytics modules query DB with entity resolution applied at runtime.
+
+**Key layers**:
+- `data/models.py` — 9 SQLAlchemy models: `Document`, `LigneFacture`, `Fournisseur`, `Anomalie`, `EntityMapping`, `MergeAuditLog`, `UploadLog`
+- `data/db.py` — Engine/session management; resolves relative SQLite paths from dashboard dir
+- `data/entity_resolution.py` — Non-destructive dedup: `resolve_column()` applies mappings to DataFrames at query time (raw data stays intact)
+- `data/entity_enrichment.py` — Auto-resolution via rapidfuzz fuzzy matching with supplier/material normalization (strips legal suffixes like SA/SARL/GmbH, operational details)
+- `data/ingestion.py` — Loads extraction JSONs into DB
+- `data/upload_pipeline.py` — PDF upload with SHA-256 duplicate detection
+- `analytics/` — Query modules per page (achats, anomalies, logistique, qualite, tendances)
+- `components/` — Reusable Streamlit UI widgets (filters, charts, data_table, kpi_card)
+- `pages/` — 8 Streamlit pages (tableau_de_bord, achats, logistique, anomalies, tendances, qualite, admin, entites)
+
+### Entity Resolution
+
+Non-destructive: raw DB values unchanged, `EntityMapping` table stores `raw_value → canonical_value` with status (approved/pending_review/rejected). `MergeAuditLog` tracks all operations for undo. Auto-resolution uses rapidfuzz (thresholds: 0.90 auto-merge, 0.50 review). Analytics modules call `resolve_column()` to apply mappings before rendering.
+
+### Database
+
+SQLite at `dashboard/data/rationalize.db`. Key relationships: `Document` → `Fournisseur` (FK), `Document` → `LigneFacture` (1:N), `Document` → `Anomalie` (1:N). Uses timezone-aware UTC datetimes.
+
+## Configuration
+
+- `config/settings.yaml` — Extraction pipeline settings (strategies, OCR config, confidence thresholds, TJM rates)
+- `dashboard/config.yaml` — Dashboard settings (DB URL, Redis, anomaly rules, entity resolution thresholds, UI)
+- `pyproject.toml` — pytest config points to `tests/` (root-level only; dashboard tests run via `pytest dashboard/tests/`)
+
+## Orchestration Rules
+
+1. **Read the agent prompt** (`prompts/*.md`) before playing an agent role
+2. **Validate every JSON output** against `schemas/` (classification.json, extraction.json, analysis.json)
+3. **On extraction failure**: log the error with reason, skip the document, don't block the pipeline
+4. **Log every step** in `output/pipeline_log.json`
+5. **Use Python tools** for heavy lifting (text extraction, OCR, tables); the LLM agent role is to interpret, structure, and analyze the extracted text
+
+## Docker Services
+
+`docker-compose.yml` defines: `paddleocr` (port 8080), `dashboard` (Streamlit port 8501, mounts `/output` read-only), `redis` (port 6379, caching with 3600s TTL).
