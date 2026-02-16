@@ -1,0 +1,19 @@
+services:
+  paddleocr:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./samples:/data/samples:ro
+      - ./output/paddleocr:/data/output
+    environment:
+      - PADDLE_DEVICE=cpu
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped

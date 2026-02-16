@@ -1,0 +1,82 @@
+# ============================================================
+# Configuration du POC Swarm PDF Extract
+# ============================================================
+
+project:
+  name: "Swarm PDF Extract — POC"
+  version: "1.0.0"
+  description: "POC d'extraction d'information multi-format PDF"
+
+# Répertoires
+paths:
+  samples: "samples/"
+  output: "output/"
+  extractions: "output/extractions/"
+  analyses: "output/analyses/"
+  reports: "output/reports/"
+  schemas: "schemas/"
+  prompts: "prompts/"
+
+# Configuration d'extraction
+extraction:
+  # Stratégie par défaut (auto, text, ocr)
+  default_strategy: "auto"
+  
+  # Seuil de caractères par page pour détecter un PDF scanné
+  scan_detection_threshold: 50
+  
+  # DPI pour la conversion OCR
+  ocr_dpi: 300
+  
+  # Langue OCR par défaut
+  ocr_lang: "fra+eng"
+  
+  # Activer le pré-traitement d'image avant OCR
+  ocr_preprocess: false
+
+  # PaddleOCR PP-StructureV3
+  paddleocr:
+    mode: "native"
+    docker_url: "http://localhost:8080"
+
+  # MLX VLM OCR (Apple Silicon GPU Metal)
+  mlx:
+    model: "paddleocr-vl"
+    max_tokens: 4096
+    temperature: 0.0
+    dpi: 300
+
+# Champs cibles pour les factures
+target_fields:
+  obligatoires:
+    - type_matiere
+    - unite
+    - prix_unitaire
+    - quantite
+  optionnels:
+    - prix_total
+    - date_depart
+    - date_arrivee
+    - lieu_depart
+    - lieu_arrivee
+
+# Seuils de confiance
+confidence:
+  # Confiance minimum pour considérer un champ comme "extrait"
+  minimum: 0.3
+  
+  # Confiance minimum pour considérer un champ comme "fiable"
+  fiable: 0.8
+  
+  # Confiance minimum pour considérer un document comme "réussi"
+  document_succes: 0.6
+
+# Rapport
+report:
+  # TJM pour estimation budget (€/jour)
+  tjm_architecte: 1000
+  tjm_dev_senior: 650
+  tjm_data_engineer: 600
+  
+  # Format de sortie du rapport
+  format: "markdown"

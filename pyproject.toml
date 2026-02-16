@@ -1,0 +1,9 @@
+[project]
+name = "swarm-pdf-extract"
+version = "1.0.0"
+description = "POC Swarm Claude Code pour extraction d'information PDF multi-format"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

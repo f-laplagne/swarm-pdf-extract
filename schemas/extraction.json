@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Extraction Document PDF",
+  "description": "Schéma de sortie de l'agent Extractor",
+  "type": "object",
+  "required": [
+    "fichier",
+    "type_document",
+    "strategie_utilisee",
+    "metadonnees",
+    "lignes",
+    "confiance_globale"
+  ],
+  "properties": {
+    "fichier": {
+      "type": "string"
+    },
+    "type_document": {
+      "type": "string"
+    },
+    "strategie_utilisee": {
+      "type": "string"
+    },
+    "metadonnees": {
+      "type": "object",
+      "required": ["numero_document", "date_document"],
+      "properties": {
+        "numero_document": { "type": ["string", "null"] },
+        "date_document": { "type": ["string", "null"] },
+        "fournisseur": {
+          "type": ["object", "null"],
+          "properties": {
+            "nom": { "type": ["string", "null"] },
+            "adresse": { "type": ["string", "null"] },
+            "siret": { "type": ["string", "null"] },
+            "tva_intra": { "type": ["string", "null"] }
+          }
+        },
+        "client": {
+          "type": ["object", "null"],
+          "properties": {
+            "nom": { "type": ["string", "null"] },
+            "adresse": { "type": ["string", "null"] }
+          }
+        },
+        "montant_ht": { "type": ["number", "null"] },
+        "montant_tva": { "type": ["number", "null"] },
+        "montant_ttc": { "type": ["number", "null"] },
+        "devise": { "type": "string", "default": "EUR" },
+        "conditions_paiement": { "type": ["string", "null"] },
+        "references": {
+          "type": ["object", "null"],
+          "properties": {
+            "commande": { "type": ["string", "null"] },
+            "contrat": { "type": ["string", "null"] },
+            "bon_livraison": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "lignes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ligne_numero", "confiance"],
+        "properties": {
+          "ligne_numero": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "type_matiere": {
+            "type": ["string", "null"],
+            "description": "Type de matière / pièce / prestation"
+          },
+          "unite": {
+            "type": ["string", "null"],
+            "description": "Unité de mesure normalisée"
+          },
+          "prix_unitaire": {
+            "type": ["number", "null"],
+            "description": "Prix unitaire HT"
+          },
+          "quantite": {
+            "type": ["number", "null"],
+            "description": "Quantité"
+          },
+          "prix_total": {
+            "type": ["number", "null"],
+            "description": "Prix total ligne HT"
+          },
+          "date_depart": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "Date de départ (ISO 8601)"
+          },
+          "date_arrivee": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "Date d'arrivée (ISO 8601)"
+          },
+          "lieu_depart": {
+            "type": ["string", "null"],
+            "description": "Lieu de départ"
+          },
+          "lieu_arrivee": {
+            "type": ["string", "null"],
+            "description": "Lieu d'arrivée / livraison"
+          },
+          "confiance": {
+            "type": "object",
+            "description": "Score de confiance par champ (0.0-1.0)",
+            "properties": {
+              "type_matiere": { "type": "number", "minimum": 0, "maximum": 1 },
+              "unite": { "type": "number", "minimum": 0, "maximum": 1 },
+              "prix_unitaire": { "type": "number", "minimum": 0, "maximum": 1 },
+              "quantite": { "type": "number", "minimum": 0, "maximum": 1 },
+              "prix_total": { "type": "number", "minimum": 0, "maximum": 1 },
+              "date_depart": { "type": "number", "minimum": 0, "maximum": 1 },
+              "date_arrivee": { "type": "number", "minimum": 0, "maximum": 1 },
+              "lieu_depart": { "type": "number", "minimum": 0, "maximum": 1 },
+              "lieu_arrivee": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "extraction_notes": {
+      "type": "string",
+      "description": "Notes sur le processus d'extraction"
+    },
+    "confiance_globale": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Score de confiance global de l'extraction"
+    },
+    "champs_manquants": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Liste des champs non trouvés"
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Avertissements (incohérences, anomalies)"
+    }
+  }
+}

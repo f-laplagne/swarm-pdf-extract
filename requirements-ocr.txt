@@ -1,0 +1,10 @@
+# PaddleOCR PP-StructureV3
+paddlepaddle==3.3.0
+paddleocr>=3.4.0
+
+# MLX VLM OCR (Apple Silicon GPU)
+mlx-vlm>=0.3.11
+
+# Partagées (versions compatibles avec requirements.txt principal)
+Pillow>=12.0.0
+pdf2image>=1.16.0

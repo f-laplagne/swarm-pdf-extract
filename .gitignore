@@ -1,0 +1,23 @@
+# Output
+output/extractions/*.json
+output/analyses/*.json
+output/reports/*.md
+output/reports/*.pdf
+
+# Samples (PDFs confidentiels)
+samples/*.pdf
+samples/*.PDF
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

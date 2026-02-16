@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Analyse Qualité",
+  "description": "Schéma de sortie de l'agent Analyzer - rapport qualité",
+  "type": "object",
+  "required": ["documents", "statistiques_globales"],
+  "properties": {
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fichier", "score_extraction"],
+        "properties": {
+          "fichier": { "type": "string" },
+          "type_document": { "type": "string" },
+          "complexite": { "type": "integer" },
+          "strategie_utilisee": { "type": "string" },
+          "score_extraction": { "type": "number", "minimum": 0, "maximum": 1 },
+          "champs_extraits": { "type": "integer" },
+          "champs_total": { "type": "integer" },
+          "champs_manquants": { "type": "array", "items": { "type": "string" } },
+          "champs_faible_confiance": { "type": "array", "items": { "type": "string" } },
+          "coherence_totaux": { "type": "boolean" },
+          "lignes_extraites": { "type": "integer" },
+          "problemes": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "statistiques_globales": {
+      "type": "object",
+      "required": ["documents_traites", "score_moyen"],
+      "properties": {
+        "documents_traites": { "type": "integer" },
+        "documents_reussis": { "type": "integer" },
+        "documents_partiels": { "type": "integer" },
+        "documents_echecs": { "type": "integer" },
+        "score_moyen": { "type": "number" },
+        "score_median": { "type": "number" },
+        "score_min": { "type": "number" },
+        "score_max": { "type": "number" }
+      }
+    }
+  }
+}

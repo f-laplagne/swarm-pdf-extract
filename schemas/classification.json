@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Classification Document PDF",
+  "description": "Schéma de sortie de l'agent Classifier",
+  "type": "object",
+  "required": [
+    "fichier",
+    "type_document",
+    "format_pdf",
+    "langue",
+    "complexite",
+    "nombre_pages",
+    "strategie_extraction",
+    "confiance_classification"
+  ],
+  "properties": {
+    "fichier": {
+      "type": "string",
+      "description": "Nom du fichier PDF"
+    },
+    "type_document": {
+      "type": "string",
+      "enum": [
+        "facture",
+        "bon_livraison",
+        "devis",
+        "bon_commande",
+        "avoir",
+        "releve",
+        "autre"
+      ],
+      "description": "Type de document identifié"
+    },
+    "format_pdf": {
+      "type": "string",
+      "enum": ["text_native", "scanned", "mixed", "form"],
+      "description": "Format du PDF"
+    },
+    "langue": {
+      "type": "string",
+      "enum": ["fr", "en", "de", "multi"],
+      "description": "Langue principale du document"
+    },
+    "complexite": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "description": "Score de complexité (1=simple, 5=très complexe)"
+    },
+    "nombre_pages": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Nombre de pages du document"
+    },
+    "tableaux_detectes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Nombre de tableaux détectés"
+    },
+    "strategie_extraction": {
+      "type": "string",
+      "enum": [
+        "pdfplumber_tables",
+        "pdfplumber_text",
+        "ocr_tesseract",
+        "ocr_paddleocr",
+        "ocr_mlx_vlm",
+        "mixed_strategy",
+        "llm_only"
+      ],
+      "description": "Stratégie d'extraction recommandée"
+    },
+    "strategie_fallback": {
+      "type": ["string", "null"],
+      "description": "Stratégie de secours"
+    },
+    "metadonnees": {
+      "type": "object",
+      "properties": {
+        "titre_detecte": { "type": ["string", "null"] },
+        "fournisseur_detecte": { "type": ["string", "null"] },
+        "client_detecte": { "type": ["string", "null"] },
+        "date_facture_detectee": { "type": ["string", "null"] }
+      },
+      "description": "Métadonnées extraites lors de la classification"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Notes et observations du classifier"
+    },
+    "confiance_classification": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Score de confiance de la classification (0.0-1.0)"
+    }
+  }
+}
