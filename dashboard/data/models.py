@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from sqlalchemy import (
-    Column, Integer, String, Float, Date, DateTime, Text, ForeignKey, Index,
+    Boolean, Column, Integer, String, Float, Date, DateTime, Text, ForeignKey, Index,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -111,4 +111,59 @@ class Anomalie(Base):
     __table_args__ = (
         Index("idx_anomalies_document", "document_id"),
         Index("idx_anomalies_type", "type_anomalie"),
+    )
+
+
+class EntityMapping(Base):
+    __tablename__ = "entity_mappings"
+
+    id = Column(Integer, primary_key=True)
+    entity_type = Column(String, nullable=False)  # "location", "material", "supplier", "company"
+    raw_value = Column(Text, nullable=False)
+    canonical_value = Column(Text, nullable=False)
+    match_mode = Column(String, default="exact")  # "exact" or "prefix"
+    source = Column(String, default="manual")  # "manual" or "auto"
+    confidence = Column(Float, default=1.0)
+    status = Column(String, default="approved")  # "approved", "pending_review", "rejected"
+    created_by = Column(String, default="admin")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    notes = Column(Text)
+
+    __table_args__ = (
+        Index("idx_entity_mappings_type_raw", "entity_type", "raw_value", unique=True),
+        Index("idx_entity_mappings_status", "status"),
+    )
+
+
+class MergeAuditLog(Base):
+    __tablename__ = "merge_audit_log"
+
+    id = Column(Integer, primary_key=True)
+    entity_type = Column(String, nullable=False)
+    action = Column(String, nullable=False)  # "merge", "split", "update", "revert"
+    canonical_value = Column(Text, nullable=False)
+    raw_values_json = Column(Text, nullable=False)  # JSON array
+    performed_by = Column(String, default="admin")
+    performed_at = Column(DateTime, default=datetime.utcnow)
+    notes = Column(Text)
+    reverted = Column(Boolean, default=False)
+    reverted_at = Column(DateTime)
+
+
+class UploadLog(Base):
+    __tablename__ = "upload_log"
+
+    id = Column(Integer, primary_key=True)
+    filename = Column(String, nullable=False)
+    content_hash = Column(String, unique=True)  # SHA-256
+    file_size = Column(Integer)
+    uploaded_by = Column(String, default="admin")
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="uploaded")  # "uploaded", "processing", "completed", "failed"
+    error_message = Column(Text)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
+
+    __table_args__ = (
+        Index("idx_upload_log_hash", "content_hash"),
+        Index("idx_upload_log_status", "status"),
     )
