@@ -8,6 +8,9 @@ output/reports/*.pdf
 samples/*.pdf
 samples/*.PDF
 
+# Database
+*.db
+
 # Python
 __pycache__/
 *.pyc
