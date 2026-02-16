@@ -17,3 +17,29 @@ services:
       retries: 3
       start_period: 60s
     restart: unless-stopped
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./output:/app/../output:ro
+      - dashboard_data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:///data/rationalize.db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  dashboard_data:
