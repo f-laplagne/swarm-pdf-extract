@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import date, datetime, timezone
 from sqlalchemy import (
     Boolean, Column, Integer, String, Float, Date, DateTime, Text, ForeignKey, Index,
 )
@@ -44,7 +44,7 @@ class Document(Base):
     confiance_globale = Column(Float)
     strategie_utilisee = Column(String)
     complexite = Column(Integer)
-    date_ingestion = Column(DateTime, default=datetime.utcnow)
+    date_ingestion = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     fournisseur = relationship("Fournisseur", back_populates="documents")
     lignes = relationship("LigneFacture", back_populates="document", cascade="all, delete-orphan")
@@ -103,7 +103,7 @@ class Anomalie(Base):
     description = Column(Text)
     valeur_attendue = Column(String)
     valeur_trouvee = Column(String)
-    date_detection = Column(DateTime, default=datetime.utcnow)
+    date_detection = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     document = relationship("Document", back_populates="anomalies")
     ligne = relationship("LigneFacture")
@@ -126,7 +126,7 @@ class EntityMapping(Base):
     confidence = Column(Float, default=1.0)
     status = Column(String, default="approved")  # "approved", "pending_review", "rejected"
     created_by = Column(String, default="admin")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     notes = Column(Text)
 
     __table_args__ = (
@@ -144,7 +144,7 @@ class MergeAuditLog(Base):
     canonical_value = Column(Text, nullable=False)
     raw_values_json = Column(Text, nullable=False)  # JSON array
     performed_by = Column(String, default="admin")
-    performed_at = Column(DateTime, default=datetime.utcnow)
+    performed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     notes = Column(Text)
     reverted = Column(Boolean, default=False)
     reverted_at = Column(DateTime)
@@ -158,7 +158,7 @@ class UploadLog(Base):
     content_hash = Column(String, unique=True)  # SHA-256
     file_size = Column(Integer)
     uploaded_by = Column(String, default="admin")
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     status = Column(String, default="uploaded")  # "uploaded", "processing", "completed", "failed"
     error_message = Column(Text)
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
