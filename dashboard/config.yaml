@@ -1,0 +1,67 @@
+database:
+  url: "sqlite:///data/rationalize.db"
+
+redis:
+  url: "redis://localhost:6379/0"
+  ttl: 3600  # cache TTL in seconds
+
+# Paths to extraction JSONs (relative to project root)
+ingestion:
+  extractions_dir: "../output/extractions"
+
+# Anomaly detection thresholds
+anomalies:
+  regles:
+    - id: "CALC_001"
+      nom: "Incohérence prix x quantité"
+      type: "coherence_calcul"
+      severite: "critique"
+      seuil_tolerance: 0.01  # 1%
+
+    - id: "PRIX_001"
+      nom: "Surfacturation potentielle"
+      type: "prix_anormal"
+      severite: "warning"
+      seuil_multiplicateur: 2.0  # 2x average
+
+    - id: "DUP_001"
+      nom: "Doublon potentiel"
+      type: "doublon"
+      severite: "critique"
+      seuil_jours: 7
+
+    - id: "DATE_001"
+      nom: "Date arrivée avant départ"
+      type: "date_invalide"
+      severite: "warning"
+
+    - id: "CONF_001"
+      nom: "Extraction faible confiance"
+      type: "qualite_donnees"
+      severite: "info"
+      seuil_confiance: 0.6
+
+    - id: "PRIX_002"
+      nom: "Dérive tarifaire"
+      type: "prix_anormal"
+      severite: "warning"
+      seuil_variation: 0.20  # 20%
+      periode_mois: 3
+
+    - id: "MANQ_001"
+      nom: "Prix manquant"
+      type: "donnees_manquantes"
+      severite: "warning"
+      seuil_confiance_min: 0.3
+
+# UI display
+ui:
+  page_title: "Rationalize"
+  page_icon: "\U0001F4CA"
+  layout: "wide"
+
+# Confidence thresholds (from parent project)
+confidence:
+  minimum: 0.3
+  fiable: 0.8
+  document_succes: 0.6
