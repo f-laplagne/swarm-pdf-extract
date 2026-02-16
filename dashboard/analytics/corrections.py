@@ -119,6 +119,25 @@ def historique_corrections(session: Session, document_id: int | None = None) -> 
     return pd.DataFrame(rows)
 
 
+def detail_confiance_document(session: Session, document_id: int) -> pd.DataFrame:
+    """Per-line, per-field confidence grid for a document. Each cell is the conf value."""
+    lignes = (
+        session.query(LigneFacture)
+        .filter(LigneFacture.document_id == document_id)
+        .order_by(LigneFacture.ligne_numero)
+        .all()
+    )
+    rows = []
+    for ligne in lignes:
+        row = {"ligne": ligne.ligne_numero, "matiere": ligne.type_matiere or "?"}
+        for field, conf_field in FIELD_CONF_PAIRS:
+            row[field] = getattr(ligne, conf_field)
+        rows.append(row)
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["ligne", "matiere"] + EDITABLE_FIELDS
+    )
+
+
 def appliquer_correction(
     session: Session,
     ligne_id: int,

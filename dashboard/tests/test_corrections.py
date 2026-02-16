@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -6,6 +7,7 @@ from dashboard.data.models import Base, CorrectionLog, Document, Fournisseur, Li
 from dashboard.analytics.corrections import (
     appliquer_correction,
     champs_faibles_pour_ligne,
+    detail_confiance_document,
     documents_a_corriger,
     historique_corrections,
     lignes_a_corriger,
@@ -205,6 +207,32 @@ def test_stats_corrections(mixed_confidence_data):
     assert stats["total"] == 2
     assert stats["lignes"] == 1
     assert stats["documents"] == 1
+
+
+def test_detail_confiance_document(mixed_confidence_data):
+    s = mixed_confidence_data["session"]
+    d1 = mixed_confidence_data["d1"]
+    df = detail_confiance_document(s, d1.id)
+    # d1 has 2 lines
+    assert len(df) == 2
+    assert "ligne" in df.columns
+    assert "matiere" in df.columns
+    # All 9 editable fields present as columns
+    for field in ["type_matiere", "prix_unitaire", "quantite", "lieu_depart"]:
+        assert field in df.columns
+    # Line 1 has conf_prix_unitaire = 0.0
+    row1 = df[df["ligne"] == 1].iloc[0]
+    assert row1["prix_unitaire"] == 0.0
+    # Line 2 has conf_prix_unitaire = 0.95
+    row2 = df[df["ligne"] == 2].iloc[0]
+    assert row2["prix_unitaire"] == 0.95
+    # None values appear as NaN/None
+    assert row1["date_depart"] is None or pd.isna(row1["date_depart"])
+
+
+def test_detail_confiance_empty(db_session):
+    df = detail_confiance_document(db_session, document_id=999)
+    assert len(df) == 0
 
 
 def test_empty_db(db_session):

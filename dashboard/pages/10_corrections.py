@@ -1,15 +1,19 @@
 """Corrections manuelles -- interface pour corriger les extractions a faible confiance."""
 
+import base64
+import os
+
 import pandas as pd
 import streamlit as st
 
 from dashboard.data.db import get_session
-from dashboard.data.models import LigneFacture
+from dashboard.data.models import Document, LigneFacture
 from dashboard.analytics.corrections import (
     EDITABLE_FIELDS,
     FIELD_CONF_PAIRS,
     appliquer_correction,
     champs_faibles_pour_ligne,
+    detail_confiance_document,
     documents_a_corriger,
     historique_corrections,
     lignes_a_corriger,
@@ -42,11 +46,80 @@ seuil = st.sidebar.slider(
 )
 
 # ---------------------------------------------------------------------------
+# PDF viewer helper
+# ---------------------------------------------------------------------------
+# Directories where original PDFs can live
+_DASHBOARD_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROJECT_ROOT = os.path.dirname(_DASHBOARD_DIR)
+_PDF_SEARCH_DIRS = [
+    os.path.join(_DASHBOARD_DIR, "data", "uploads"),
+    os.path.join(_PROJECT_ROOT, "samples"),
+]
+
+
+def _find_pdf(fichier: str) -> str | None:
+    """Locate the PDF file on disk given the Document.fichier name."""
+    basename = os.path.basename(fichier)
+    for search_dir in _PDF_SEARCH_DIRS:
+        if not os.path.isdir(search_dir):
+            continue
+        # Exact match
+        candidate = os.path.join(search_dir, basename)
+        if os.path.isfile(candidate):
+            return candidate
+        # Also check hash-prefixed uploads (format: <hash12>_<filename>)
+        for f in os.listdir(search_dir):
+            if f.endswith(basename):
+                return os.path.join(search_dir, f)
+    return None
+
+
+def _render_pdf(pdf_path: str, height: int = 700):
+    """Embed a PDF in the page using an iframe with base64 data URI."""
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
+    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    pdf_html = (
+        f'<iframe src="data:application/pdf;base64,{b64}" '
+        f'width="100%" height="{height}px" '
+        f'style="border: 1px solid #ccc; border-radius: 4px;" '
+        f'type="application/pdf"></iframe>'
+    )
+    st.components.v1.html(pdf_html, height=height + 10, scrolling=False)
+
+
+# ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 tab_docs, tab_corriger, tab_historique = st.tabs(
     ["Documents a corriger", "Corriger une ligne", "Historique"]
 )
+
+# ============================================================
+# Helpers for confidence display
+# ============================================================
+
+def _conf_color(val):
+    """Return background color CSS for a confidence value."""
+    if val is None or pd.isna(val):
+        return "background-color: #ffcccc"  # red — unknown
+    if val < 0.30:
+        return "background-color: #ff4d4d; color: white"  # strong red
+    if val < 0.60:
+        return "background-color: #ff9966"  # orange
+    if val < seuil:
+        return "background-color: #ffdd57"  # yellow
+    if val < 0.80:
+        return "background-color: #d4edda"  # light green
+    return "background-color: #28a745; color: white"  # strong green
+
+
+def _format_conf(val):
+    """Format a confidence value as percentage string."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return "N/A"
+    return f"{val:.0%}"
+
 
 # ============================================================
 # Tab 1: Documents a corriger
@@ -62,7 +135,38 @@ with tab_docs:
     ])
 
     if not df_docs.empty:
-        data_table(df_docs, title="Documents avec lignes a faible confiance", export=False)
+        st.subheader("Documents avec lignes a faible confiance")
+        st.caption(f"Seuil actuel : **{seuil:.0%}** — les documents ci-dessous ont au moins une ligne en dessous.")
+
+        df_display = df_docs.rename(columns={
+            "fichier": "Fichier",
+            "type_document": "Type",
+            "confiance_globale": "Confiance globale",
+            "nb_lignes_faibles": "Lignes faibles",
+        }).drop(columns=["document_id"])
+
+        styled = (
+            df_display.style
+            .applymap(_conf_color, subset=["Confiance globale"])
+            .format({"Confiance globale": _format_conf})
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        # Expandable per-document confidence detail
+        st.markdown("#### Detail par document")
+        for _, row in df_docs.iterrows():
+            with st.expander(f"{row['fichier']} — confiance globale : {_format_conf(row['confiance_globale'])}"):
+                df_detail = detail_confiance_document(session, row["document_id"])
+                if not df_detail.empty:
+                    conf_cols = [c for c in df_detail.columns if c not in ("ligne", "matiere")]
+                    styled_detail = (
+                        df_detail.style
+                        .applymap(_conf_color, subset=conf_cols)
+                        .format({c: _format_conf for c in conf_cols})
+                    )
+                    st.dataframe(styled_detail, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucune ligne pour ce document.")
     else:
         st.success("Aucun document ne necessite de correction au seuil actuel.")
 
@@ -84,6 +188,48 @@ with tab_corriger:
             "Document", options=list(doc_options.keys()), key="correction_doc_select",
         )
         selected_doc_id = doc_options[selected_doc_label]
+
+        # Fetch document record for PDF lookup
+        selected_doc = session.get(Document, selected_doc_id)
+        pdf_path = _find_pdf(selected_doc.fichier) if selected_doc else None
+
+        # --- Side-by-side: PDF original + confidence heatmap ---
+        col_pdf, col_conf = st.columns([1, 1])
+
+        with col_pdf:
+            st.markdown("#### Document original")
+            if pdf_path:
+                _render_pdf(pdf_path, height=600)
+            else:
+                st.warning(
+                    f"PDF introuvable : *{selected_doc.fichier}*\n\n"
+                    "Placez le fichier dans `samples/` ou `dashboard/data/uploads/` "
+                    "pour l'afficher ici."
+                )
+
+        with col_conf:
+            st.markdown("#### Carte de confiance")
+            st.caption("Rouge = le systeme ne fait pas confiance, vert = fiable.")
+            if selected_doc:
+                conf_globale = selected_doc.confiance_globale
+                st.markdown(
+                    f"**Confiance globale du document : "
+                    f"{_format_conf(conf_globale)}**"
+                )
+                if conf_globale is not None:
+                    st.progress(min(conf_globale, 1.0))
+
+            df_detail = detail_confiance_document(session, selected_doc_id)
+            if not df_detail.empty:
+                conf_cols = [c for c in df_detail.columns if c not in ("ligne", "matiere")]
+                styled_overview = (
+                    df_detail.style
+                    .applymap(_conf_color, subset=conf_cols)
+                    .format({c: _format_conf for c in conf_cols})
+                )
+                st.dataframe(styled_overview, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
 
         # Line selector
         df_lignes = lignes_a_corriger(session, selected_doc_id, seuil=seuil)
