@@ -79,3 +79,4 @@ confidence:
   minimum: 0.3
   fiable: 0.8
   document_succes: 0.6
+  correction_seuil: 0.70

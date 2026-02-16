@@ -39,5 +39,6 @@ st.markdown("""
 - **Tendances** -- Evolution temporelle des prix et volumes
 - **Qualite** -- Suivi de la qualite des donnees extraites
 - **Transport** -- Visualisation des routes d'expedition sur carte
+- **Corrections** -- Correction manuelle des extractions faibles
 - **Admin** -- Ingestion et configuration
 """)

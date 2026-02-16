@@ -150,6 +150,29 @@ class MergeAuditLog(Base):
     reverted_at = Column(DateTime)
 
 
+class CorrectionLog(Base):
+    __tablename__ = "correction_log"
+
+    id = Column(Integer, primary_key=True)
+    ligne_id = Column(Integer, ForeignKey("lignes_facture.id"), nullable=False)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
+    champ = Column(String, nullable=False)
+    ancienne_valeur = Column(Text)
+    nouvelle_valeur = Column(Text)
+    ancienne_confiance = Column(Float)
+    corrige_par = Column(String, default="admin")
+    corrige_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    notes = Column(Text)
+
+    ligne = relationship("LigneFacture")
+    document = relationship("Document")
+
+    __table_args__ = (
+        Index("idx_correction_log_ligne", "ligne_id"),
+        Index("idx_correction_log_document", "document_id"),
+    )
+
+
 class UploadLog(Base):
     __tablename__ = "upload_log"
 
