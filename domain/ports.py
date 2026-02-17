@@ -96,3 +96,100 @@ class AuditRepository(ABC):
 
     @abstractmethod
     def list_by_type(self, entity_type: str) -> list[MergeAuditEntry]: ...
+
+
+# ── Infrastructure Ports ──────────────────────────────────────────────────
+
+
+class CachePort(ABC):
+    """Port for key-value caching (Redis, in-memory, etc.)."""
+
+    @abstractmethod
+    def get(self, key: str) -> object | None: ...
+
+    @abstractmethod
+    def set(self, key: str, value: object, ttl: int = 3600) -> None: ...
+
+    @abstractmethod
+    def invalidate(self, prefix: str) -> None: ...
+
+
+class GeocodingPort(ABC):
+    """Port for geocoding addresses and computing distances."""
+
+    @abstractmethod
+    def geocode(self, address: str) -> tuple[float, float] | None: ...
+
+    @abstractmethod
+    def distance_km(self, coord1: tuple, coord2: tuple) -> float: ...
+
+
+class PDFTextExtractorPort(ABC):
+    """Port for extracting text from PDF files."""
+
+    @abstractmethod
+    def extract_text(self, pdf_path: str) -> dict: ...
+
+
+class OCRProcessorPort(ABC):
+    """Port for OCR-based text extraction from scanned PDFs."""
+
+    @abstractmethod
+    def extract_text_ocr(self, pdf_path: str, lang: str = "fra+eng") -> dict: ...
+
+
+class TableExtractorPort(ABC):
+    """Port for extracting tables from PDF files."""
+
+    @abstractmethod
+    def extract_tables(self, pdf_path: str) -> dict: ...
+
+
+class FileSystemPort(ABC):
+    """Port for file system operations (read, write, list, upload)."""
+
+    @abstractmethod
+    def read_json(self, path: str) -> dict: ...
+
+    @abstractmethod
+    def write_json(self, path: str, data: dict) -> None: ...
+
+    @abstractmethod
+    def list_files(self, directory: str, pattern: str) -> list[str]: ...
+
+    @abstractmethod
+    def save_upload(self, content: bytes, filename: str) -> tuple[str, str]: ...
+
+
+# ── Service Ports ─────────────────────────────────────────────────────────
+
+
+class IngestionService(ABC):
+    """Port for ingesting extraction JSON data into the domain."""
+
+    @abstractmethod
+    def ingest_extraction(self, data: dict) -> Document | None: ...
+
+    @abstractmethod
+    def ingest_directory(self, directory: str) -> dict: ...
+
+
+class AnomalyDetectionService(ABC):
+    """Port for detecting anomalies across documents."""
+
+    @abstractmethod
+    def detect(self, rules: list[dict]) -> list[Anomalie]: ...
+
+
+class EntityResolutionService(ABC):
+    """Port for entity resolution (merge, revert, auto-resolve)."""
+
+    @abstractmethod
+    def merge(self, entity_type: str, canonical: str,
+              raw_values: list[str], source: str) -> MergeAuditEntry: ...
+
+    @abstractmethod
+    def revert_merge(self, audit_id: int) -> None: ...
+
+    @abstractmethod
+    def run_auto_resolution(self, config: dict) -> dict: ...

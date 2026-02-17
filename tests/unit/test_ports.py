@@ -9,12 +9,24 @@ import pytest
 from abc import ABC
 
 from domain.ports import (
+    # Repository ports
     DocumentRepository,
     SupplierRepository,
     LineItemRepository,
     AnomalyRepository,
     MappingRepository,
     AuditRepository,
+    # Infrastructure ports
+    CachePort,
+    GeocodingPort,
+    PDFTextExtractorPort,
+    OCRProcessorPort,
+    TableExtractorPort,
+    FileSystemPort,
+    # Service ports
+    IngestionService,
+    AnomalyDetectionService,
+    EntityResolutionService,
 )
 
 
@@ -73,3 +85,90 @@ class TestAuditRepository:
     def test_cannot_instantiate(self):
         with pytest.raises(TypeError):
             AuditRepository()
+
+
+# ── Infrastructure ports are ABCs ─────────────────────────────────────────
+
+
+class TestCachePort:
+    def test_is_abstract(self):
+        assert issubclass(CachePort, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            CachePort()
+
+
+class TestGeocodingPort:
+    def test_is_abstract(self):
+        assert issubclass(GeocodingPort, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            GeocodingPort()
+
+
+class TestPDFTextExtractorPort:
+    def test_is_abstract(self):
+        assert issubclass(PDFTextExtractorPort, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            PDFTextExtractorPort()
+
+
+class TestOCRProcessorPort:
+    def test_is_abstract(self):
+        assert issubclass(OCRProcessorPort, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            OCRProcessorPort()
+
+
+class TestTableExtractorPort:
+    def test_is_abstract(self):
+        assert issubclass(TableExtractorPort, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            TableExtractorPort()
+
+
+class TestFileSystemPort:
+    def test_is_abstract(self):
+        assert issubclass(FileSystemPort, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            FileSystemPort()
+
+
+# ── Service ports are ABCs ────────────────────────────────────────────────
+
+
+class TestIngestionService:
+    def test_is_abstract(self):
+        assert issubclass(IngestionService, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            IngestionService()
+
+
+class TestAnomalyDetectionService:
+    def test_is_abstract(self):
+        assert issubclass(AnomalyDetectionService, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            AnomalyDetectionService()
+
+
+class TestEntityResolutionService:
+    def test_is_abstract(self):
+        assert issubclass(EntityResolutionService, ABC)
+
+    def test_cannot_instantiate(self):
+        with pytest.raises(TypeError):
+            EntityResolutionService()
