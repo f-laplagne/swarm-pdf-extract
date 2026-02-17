@@ -242,27 +242,69 @@ _DATE_FIELDS = {"date_depart", "date_arrivee"}
 
 @st.cache_data(show_spinner=False)
 def _page_words(pdf_path: str, page_number: int) -> list[dict]:
-    """Extract words with normalized bboxes (0-1) from a PDF page via pdfplumber."""
+    """Extract words with normalized bboxes (0-1) from a PDF page.
+
+    Strategy: try pdfplumber first (native text). If the page yields 0 words
+    (scanned PDF), fall back to Tesseract OCR on the rendered page image.
+    """
+    # --- Try pdfplumber first (fast, native text) ---
     try:
         import pdfplumber
-    except ImportError:
-        return []
-    try:
         with pdfplumber.open(pdf_path) as pdf:
             if page_number < 1 or page_number > len(pdf.pages):
                 return []
             page = pdf.pages[page_number - 1]
             pw, ph = float(page.width), float(page.height)
-            return [
-                {
-                    "text": w["text"],
-                    "x_min": w["x0"] / pw,
-                    "y_min": w["top"] / ph,
-                    "x_max": w["x1"] / pw,
-                    "y_max": w["bottom"] / ph,
-                }
-                for w in page.extract_words(keep_blank_chars=False)
-            ]
+            plumber_words = page.extract_words(keep_blank_chars=False)
+            if plumber_words:
+                return [
+                    {
+                        "text": w["text"],
+                        "x_min": w["x0"] / pw,
+                        "y_min": w["top"] / ph,
+                        "x_max": w["x1"] / pw,
+                        "y_max": w["bottom"] / ph,
+                    }
+                    for w in plumber_words
+                ]
+    except Exception:
+        pass
+
+    # --- Fallback: OCR via Tesseract on rendered page image ---
+    try:
+        import pytesseract
+        from pdf2image import convert_from_path
+
+        images = convert_from_path(
+            pdf_path, dpi=200, first_page=page_number, last_page=page_number,
+        )
+        if not images:
+            return []
+        img = images[0]
+        iw, ih = img.size
+
+        # Try French first, fall back to English if fra not installed
+        try:
+            data = pytesseract.image_to_data(img, lang="fra", output_type=pytesseract.Output.DICT)
+        except pytesseract.TesseractError:
+            data = pytesseract.image_to_data(img, lang="eng", output_type=pytesseract.Output.DICT)
+        words = []
+        for i in range(len(data["text"])):
+            text = data["text"][i].strip()
+            if not text or int(data["conf"][i]) < 30:
+                continue
+            x = data["left"][i]
+            y = data["top"][i]
+            w = data["width"][i]
+            h = data["height"][i]
+            words.append({
+                "text": text,
+                "x_min": x / iw,
+                "y_min": y / ih,
+                "x_max": (x + w) / iw,
+                "y_max": (y + h) / ih,
+            })
+        return words
     except Exception:
         return []
 
