@@ -3,6 +3,7 @@
 Only stdlib imports allowed: dataclasses, datetime, enum.
 """
 
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -32,3 +33,21 @@ class NiveauSeverite(Enum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
+
+
+# ── Value Objects ───────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ScoreConfiance:
+    """Per-field confidence scores for an invoice line extraction."""
+
+    type_matiere: float = 0.0
+    unite: float = 0.0
+    prix_unitaire: float = 0.0
+    quantite: float = 0.0
+    prix_total: float = 0.0
+    date_depart: float = 0.0
+    date_arrivee: float = 0.0
+    lieu_depart: float = 0.0
+    lieu_arrivee: float = 0.0
