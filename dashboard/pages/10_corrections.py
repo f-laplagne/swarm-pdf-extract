@@ -1,11 +1,28 @@
 """Corrections manuelles -- interface pour corriger les extractions a faible confiance."""
 
+import base64
+import io
 import os
 from types import SimpleNamespace
 
 import pandas as pd
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
+
+# --- Monkey-patch for streamlit-drawable-canvas compatibility with Streamlit 1.54+ ---
+# st_canvas internally calls st_image.image_to_url() which was removed.
+import streamlit.elements.image as _st_image_module
+
+if not hasattr(_st_image_module, "image_to_url"):
+
+    def _image_to_url(image, width, clamp, channels, output_format, image_id):
+        """Compatibility shim: convert PIL Image to base64 data URL."""
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        return f"data:image/png;base64,{b64}"
+
+    _st_image_module.image_to_url = _image_to_url
 
 from dashboard.data.db import get_session
 from dashboard.data.models import BoundingBox, Document, LigneFacture
