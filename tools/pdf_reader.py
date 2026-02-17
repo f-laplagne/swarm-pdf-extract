@@ -18,6 +18,8 @@ import json
 import os
 from pathlib import Path
 
+from domain.extraction.strategy_selector import select_strategy, ExtractionStrategy
+
 try:
     import pdfplumber
 except ImportError:
@@ -152,9 +154,18 @@ def extract_auto(pdf_path: str) -> dict:
     # Vérifier si le texte est suffisant
     total_chars = sum(p.get("longueur", 0) for p in result.get("pages", []))
     pages = result.get("nombre_pages", 1)
+    chars_per_page = total_chars / max(pages, 1)
+    has_tables = len(result.get("tables", [])) > 0
 
-    # Si moins de 50 caractères par page en moyenne → probablement scanné
-    if total_chars / max(pages, 1) < 50:
+    # Delegate strategy decision to domain
+    strategy = select_strategy(chars_per_page, has_tables)
+
+    if strategy in (ExtractionStrategy.PDFPLUMBER_TEXT, ExtractionStrategy.PDFPLUMBER_TABLES):
+        result["methode"] = "auto_pdfplumber"
+        return result
+
+    # OCR needed — follow existing fallback chain
+    if strategy == ExtractionStrategy.OCR_TESSERACT:
         print(f"⚠️  Texte insuffisant ({total_chars} chars pour {pages} pages), tentative PP-StructureV3...", file=sys.stderr)
 
         # Fallback 1 : PP-StructureV3 natif (détection tableaux)
