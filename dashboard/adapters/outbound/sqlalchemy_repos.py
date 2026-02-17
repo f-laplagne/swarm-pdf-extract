@@ -11,10 +11,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dashboard.adapters.outbound.sqlalchemy_models import (
+    Document as OrmDocument,
     EntityMapping as OrmEntityMapping,
+    Fournisseur as OrmFournisseur,
 )
-from domain.models import EntityMapping as DomainEntityMapping, StatutMapping
-from domain.ports import MappingRepository
+from domain.models import (
+    Document as DomainDocument,
+    EntityMapping as DomainEntityMapping,
+    Fournisseur as DomainFournisseur,
+    StatutMapping,
+    TypeDocument,
+)
+from domain.ports import DocumentRepository, MappingRepository
 
 
 class SqlAlchemyMappingRepository(MappingRepository):
@@ -110,5 +118,97 @@ class SqlAlchemyMappingRepository(MappingRepository):
             statut=statut,
             confidence=orm.confidence or 0.0,
             source=orm.source or "manual",
+            id=orm.id,
+        )
+
+
+class SqlAlchemyDocumentRepository(DocumentRepository):
+    """SQLAlchemy adapter for the DocumentRepository port."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    # ── Commands ───────────────────────────────────────────────────────
+
+    def save(self, document: DomainDocument) -> DomainDocument:
+        """Persist a domain Document (and its fournisseur if present)."""
+        orm_fournisseur_id = None
+        if document.fournisseur:
+            existing = self._session.execute(
+                select(OrmFournisseur).where(
+                    OrmFournisseur.nom == document.fournisseur.nom
+                )
+            ).scalar_one_or_none()
+            if existing:
+                orm_fournisseur_id = existing.id
+            else:
+                f = OrmFournisseur(
+                    nom=document.fournisseur.nom,
+                    adresse=document.fournisseur.adresse,
+                )
+                self._session.add(f)
+                self._session.flush()
+                orm_fournisseur_id = f.id
+
+        orm_doc = OrmDocument(
+            fichier=document.fichier,
+            type_document=document.type_document.value,
+            confiance_globale=document.confiance_globale,
+            montant_ht=document.montant_ht,
+            montant_tva=document.montant_tva,
+            montant_ttc=document.montant_ttc,
+            date_document=document.date_document,
+            fournisseur_id=orm_fournisseur_id,
+        )
+        self._session.add(orm_doc)
+        self._session.flush()
+        document.id = orm_doc.id
+        if document.fournisseur:
+            document.fournisseur.id = orm_fournisseur_id
+        return document
+
+    # ── Queries ────────────────────────────────────────────────────────
+
+    def find_by_filename(self, filename: str) -> DomainDocument | None:
+        """Return a domain Document matching the filename, or None."""
+        orm = self._session.execute(
+            select(OrmDocument).where(OrmDocument.fichier == filename)
+        ).scalar_one_or_none()
+        if orm is None:
+            return None
+        return self._to_domain(orm)
+
+    def list_all(self) -> list[DomainDocument]:
+        """Return all documents as domain objects."""
+        return [
+            self._to_domain(orm)
+            for orm in self._session.scalars(select(OrmDocument))
+        ]
+
+    # ── Internal helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def _to_domain(orm: OrmDocument) -> DomainDocument:
+        """Convert an ORM Document row to a domain Document."""
+        fournisseur = None
+        if orm.fournisseur:
+            fournisseur = DomainFournisseur(
+                nom=orm.fournisseur.nom,
+                adresse=orm.fournisseur.adresse,
+                id=orm.fournisseur.id,
+            )
+        return DomainDocument(
+            fichier=orm.fichier,
+            type_document=(
+                TypeDocument(orm.type_document)
+                if orm.type_document
+                else TypeDocument.AUTRE
+            ),
+            confiance_globale=orm.confiance_globale or 0.0,
+            montant_ht=orm.montant_ht,
+            montant_tva=orm.montant_tva,
+            montant_ttc=orm.montant_ttc,
+            date_document=orm.date_document,
+            fournisseur=fournisseur,
             id=orm.id,
         )
