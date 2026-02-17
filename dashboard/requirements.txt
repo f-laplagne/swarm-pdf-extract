@@ -27,6 +27,12 @@ streamlit-folium>=0.22.0
 # Fuzzy matching (entity enrichment)
 rapidfuzz>=3.0.0
 
+# PDF text extraction with word positions (auto-detect bboxes)
+pdfplumber>=0.10.0
+
+# Canvas annotation (corrections page)
+streamlit-drawable-canvas>=0.9.3
+
 # Testing
 pytest>=8.0.0
 pytest-cov>=5.0.0

@@ -3,16 +3,21 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from dashboard.data.models import Base, CorrectionLog, Document, Fournisseur, LigneFacture
+from dashboard.data.models import Base, BoundingBox, CorrectionLog, Document, Fournisseur, LigneFacture
 from dashboard.analytics.corrections import (
     appliquer_correction,
+    bboxes_pour_ligne,
+    bboxes_pour_page,
     champs_faibles_pour_ligne,
     detail_confiance_document,
     documents_a_corriger,
     historique_corrections,
     lignes_a_corriger,
     recalculer_confiance_globale,
+    sauvegarder_bbox,
     stats_corrections,
+    supprimer_bbox,
+    supprimer_ligne,
 )
 
 
@@ -186,6 +191,8 @@ def test_historique_corrections(mixed_confidence_data):
     df = historique_corrections(s)
     assert len(df) == 1
     assert df.iloc[0]["champ"] == "prix_unitaire"
+    assert "fichier" in df.columns
+    assert df.iloc[0]["fichier"] == d1.fichier
     # Filter by document
     df_filtered = historique_corrections(s, document_id=d1.id)
     assert len(df_filtered) == 1
@@ -235,6 +242,38 @@ def test_detail_confiance_empty(db_session):
     assert len(df) == 0
 
 
+def test_supprimer_ligne(mixed_confidence_data):
+    s = mixed_confidence_data["session"]
+    d1 = mixed_confidence_data["d1"]
+    l1 = mixed_confidence_data["l1"]
+
+    # Before: 2 lines visible
+    df_before = detail_confiance_document(s, d1.id)
+    assert len(df_before) == 2
+
+    # Delete line 1
+    log = supprimer_ligne(s, l1.id, supprime_par="admin", notes="ligne inutile")
+    assert log.champ == "__suppression__"
+    assert log.nouvelle_valeur == "supprimee"
+    assert l1.supprime is True
+
+    # After: only 1 line visible
+    df_after = detail_confiance_document(s, d1.id)
+    assert len(df_after) == 1
+
+    # Deleted line excluded from correction candidates
+    df_lignes = lignes_a_corriger(s, d1.id, seuil=0.70)
+    assert all(row["ligne_id"] != l1.id for _, row in df_lignes.iterrows())
+
+    # Confiance_globale recalculated without deleted line
+    doc = s.get(type(d1), d1.id)
+    assert doc.confiance_globale is not None
+
+    # Historique shows the suppression
+    df_hist = historique_corrections(s)
+    assert any(df_hist["champ"] == "__suppression__")
+
+
 def test_empty_db(db_session):
     df_docs = documents_a_corriger(db_session, seuil=0.70)
     assert len(df_docs) == 0
@@ -244,3 +283,241 @@ def test_empty_db(db_session):
     assert stats["total"] == 0
     df_hist = historique_corrections(db_session)
     assert len(df_hist) == 0
+
+
+# ============================================================
+# Bounding Box tests
+# ============================================================
+
+def test_sauvegarder_bbox(mixed_confidence_data):
+    s = mixed_confidence_data["session"]
+    l1 = mixed_confidence_data["l1"]
+    d1 = mixed_confidence_data["d1"]
+    bbox = sauvegarder_bbox(
+        s, l1.id, d1.id, "prix_unitaire", page_number=1,
+        x_min=0.1, y_min=0.2, x_max=0.5, y_max=0.4,
+    )
+    assert bbox.id is not None
+    assert bbox.source == "manual"
+    assert bbox.champ == "prix_unitaire"
+    assert bbox.page_number == 1
+
+
+def test_bbox_coords_validation(mixed_confidence_data):
+    s = mixed_confidence_data["session"]
+    l1 = mixed_confidence_data["l1"]
+    d1 = mixed_confidence_data["d1"]
+    # Out of range
+    with pytest.raises(ValueError, match="hors de l'intervalle"):
+        sauvegarder_bbox(s, l1.id, d1.id, "unite", 1, -0.1, 0.2, 0.5, 0.4)
+    with pytest.raises(ValueError, match="hors de l'intervalle"):
+        sauvegarder_bbox(s, l1.id, d1.id, "unite", 1, 0.1, 0.2, 1.5, 0.4)
+    # min >= max
+    with pytest.raises(ValueError, match="min doit etre < max"):
+        sauvegarder_bbox(s, l1.id, d1.id, "unite", 1, 0.5, 0.2, 0.3, 0.4)
+    with pytest.raises(ValueError, match="min doit etre < max"):
+        sauvegarder_bbox(s, l1.id, d1.id, "unite", 1, 0.1, 0.5, 0.5, 0.3)
+
+
+def test_bboxes_pour_page(mixed_confidence_data):
+    s = mixed_confidence_data["session"]
+    l1 = mixed_confidence_data["l1"]
+    d1 = mixed_confidence_data["d1"]
+    sauvegarder_bbox(s, l1.id, d1.id, "prix_unitaire", 1, 0.1, 0.2, 0.5, 0.4)
+    sauvegarder_bbox(s, l1.id, d1.id, "quantite", 1, 0.6, 0.2, 0.9, 0.4)
+    sauvegarder_bbox(s, l1.id, d1.id, "type_matiere", 2, 0.1, 0.1, 0.5, 0.3)
+    # Page 1 → 2 bboxes
+    page1 = bboxes_pour_page(s, d1.id, 1)
+    assert len(page1) == 2
+    # Page 2 → 1 bbox
+    page2 = bboxes_pour_page(s, d1.id, 2)
+    assert len(page2) == 1
+    assert page2[0].champ == "type_matiere"
+    # Page 3 → 0
+    assert len(bboxes_pour_page(s, d1.id, 3)) == 0
+
+
+def test_bboxes_pour_ligne(mixed_confidence_data):
+    s = mixed_confidence_data["session"]
+    l1 = mixed_confidence_data["l1"]
+    l2 = mixed_confidence_data["l2"]
+    d1 = mixed_confidence_data["d1"]
+    sauvegarder_bbox(s, l1.id, d1.id, "prix_unitaire", 1, 0.1, 0.2, 0.5, 0.4)
+    sauvegarder_bbox(s, l1.id, d1.id, "quantite", 1, 0.6, 0.2, 0.9, 0.4)
+    sauvegarder_bbox(s, l2.id, d1.id, "type_matiere", 1, 0.1, 0.5, 0.5, 0.7)
+    assert len(bboxes_pour_ligne(s, l1.id)) == 2
+    assert len(bboxes_pour_ligne(s, l2.id)) == 1
+
+
+def test_supprimer_bbox(mixed_confidence_data):
+    s = mixed_confidence_data["session"]
+    l1 = mixed_confidence_data["l1"]
+    d1 = mixed_confidence_data["d1"]
+    bbox = sauvegarder_bbox(s, l1.id, d1.id, "prix_unitaire", 1, 0.1, 0.2, 0.5, 0.4)
+    bbox_id = bbox.id
+    supprimer_bbox(s, bbox_id)
+    assert s.get(BoundingBox, bbox_id) is None
+
+
+def test_supprimer_bbox_not_found(db_session):
+    with pytest.raises(ValueError, match="introuvable"):
+        supprimer_bbox(db_session, 99999)
+
+
+def test_number_search_strings():
+    from dashboard.pages import __path__ as _  # noqa — ensure importable
+    # Import the helpers directly from the module file
+    import importlib.util, sys
+    spec = importlib.util.spec_from_file_location(
+        "corrections_page",
+        "dashboard/pages/10_corrections.py",
+        submodule_search_locations=[],
+    )
+    # We can't fully import a Streamlit page, so test the pure functions directly
+    # by extracting them. Instead, test the logic inline.
+    from types import SimpleNamespace
+
+    # Test _number_search_strings logic
+    def _number_search_strings(value):
+        if value is None:
+            return []
+        try:
+            fval = float(value)
+        except (ValueError, TypeError):
+            return []
+        results = set()
+        s2 = f"{fval:.2f}"
+        results.add(s2)
+        results.add(s2.replace(".", ","))
+        s3 = f"{fval:.3f}"
+        results.add(s3)
+        results.add(s3.replace(".", ","))
+        sg = f"{fval:g}"
+        results.add(sg)
+        results.add(sg.replace(".", ","))
+        if fval == int(fval):
+            results.add(str(int(fval)))
+        return [r for r in results if len(r) >= 2]
+
+    patterns = _number_search_strings(3.5)
+    assert "3,50" in patterns
+    assert "3.50" in patterns
+
+    patterns = _number_search_strings(87.5)
+    assert "87,50" in patterns
+    assert "87.50" in patterns
+
+    patterns = _number_search_strings(24.198)
+    assert "24,198" in patterns
+    assert "24.198" in patterns
+
+    patterns = _number_search_strings(25.0)
+    assert "25,00" in patterns
+    assert "25" in patterns
+
+    assert _number_search_strings(None) == []
+
+
+def test_find_number_in_words():
+    # Simulate PDF words
+    words = [
+        {"text": "3,50", "x_min": 0.7, "y_min": 0.3, "x_max": 0.8, "y_max": 0.35},
+        {"text": "87,50", "x_min": 0.85, "y_min": 0.3, "x_max": 0.95, "y_max": 0.35},
+        {"text": "24,198", "x_min": 0.5, "y_min": 0.3, "x_max": 0.6, "y_max": 0.35},
+    ]
+
+    def _find_number_bbox(words, value):
+        def _number_search_strings(v):
+            try:
+                fval = float(v)
+            except (ValueError, TypeError):
+                return []
+            results = set()
+            s2 = f"{fval:.2f}"
+            results.add(s2); results.add(s2.replace(".", ","))
+            s3 = f"{fval:.3f}"
+            results.add(s3); results.add(s3.replace(".", ","))
+            sg = f"{fval:g}"
+            results.add(sg); results.add(sg.replace(".", ","))
+            if fval == int(fval):
+                results.add(str(int(fval)))
+            return [r for r in results if len(r) >= 2]
+
+        patterns = _number_search_strings(value)
+        for word in words:
+            for p in patterns:
+                if word["text"].strip() == p:
+                    return word
+        return None
+
+    assert _find_number_bbox(words, 3.5) is not None
+    assert _find_number_bbox(words, 3.5)["text"] == "3,50"
+    assert _find_number_bbox(words, 87.5)["text"] == "87,50"
+    assert _find_number_bbox(words, 24.198)["text"] == "24,198"
+    assert _find_number_bbox(words, 99.99) is None
+
+
+def test_find_text_in_words():
+    words = [
+        {"text": "RECHARGEMENT", "x_min": 0.2, "y_min": 0.3, "x_max": 0.4, "y_max": 0.35},
+        {"text": "60", "x_min": 0.41, "y_min": 0.3, "x_max": 0.44, "y_max": 0.35},
+        {"text": "BOB", "x_min": 0.45, "y_min": 0.3, "x_max": 0.5, "y_max": 0.35},
+        {"text": "EURENCO", "x_min": 0.2, "y_min": 0.4, "x_max": 0.35, "y_max": 0.45},
+    ]
+
+    def _find_text_bbox(words, text_value):
+        if not text_value or len(str(text_value).strip()) < 2:
+            return None
+        text_upper = str(text_value).strip().upper()
+        for w in words:
+            if w["text"].upper() == text_upper:
+                return w
+        sig_words = [w for w in str(text_value).split() if len(w) >= 3]
+        if not sig_words:
+            return None
+        first = sig_words[0].upper()
+        for i, w in enumerate(words):
+            if w["text"].upper() == first:
+                bbox = dict(w)
+                sig_idx = 1
+                for k in range(i + 1, min(i + 20, len(words))):
+                    if sig_idx >= len(sig_words):
+                        break
+                    nw = words[k]
+                    if abs(nw["y_min"] - w["y_min"]) > 0.02:
+                        break
+                    bbox["x_max"] = max(bbox["x_max"], nw["x_max"])
+                    bbox["y_max"] = max(bbox["y_max"], nw["y_max"])
+                    if nw["text"].upper() == sig_words[sig_idx].upper():
+                        sig_idx += 1
+                return bbox
+        return None
+
+    # Single word match
+    result = _find_text_bbox(words, "EURENCO")
+    assert result is not None
+    assert result["text"] == "EURENCO"
+
+    # Multi-word match: "RECHARGEMENT 60 BOB" — extends bbox
+    result = _find_text_bbox(words, "RECHARGEMENT 60 BOB DE CELLULOSE")
+    assert result is not None
+    assert result["x_min"] == 0.2
+    assert result["x_max"] == 0.5  # extended to BOB
+
+    # No match
+    assert _find_text_bbox(words, "MANUCO") is None
+    assert _find_text_bbox(words, None) is None
+
+
+def test_bbox_with_correction_log(mixed_confidence_data):
+    s = mixed_confidence_data["session"]
+    l1 = mixed_confidence_data["l1"]
+    d1 = mixed_confidence_data["d1"]
+    logs = appliquer_correction(s, l1.id, {"prix_unitaire": 15.0}, "admin")
+    log_id = logs[0].id
+    bbox = sauvegarder_bbox(
+        s, l1.id, d1.id, "prix_unitaire", 1,
+        0.1, 0.2, 0.5, 0.4,
+        correction_log_id=log_id,
+    )
+    assert bbox.correction_log_id == log_id

@@ -6,7 +6,7 @@ import pandas as pd
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from dashboard.data.models import CorrectionLog, Document, LigneFacture
+from dashboard.data.models import BoundingBox, CorrectionLog, Document, LigneFacture
 
 # The 9 editable field / confidence pairs on LigneFacture
 EDITABLE_FIELDS = [
@@ -40,6 +40,8 @@ def documents_a_corriger(session: Session, seuil: float = 0.70) -> pd.DataFrame:
         seen.add(doc.id)
         nb_faibles = 0
         for ligne in doc.lignes:
+            if ligne.supprime:
+                continue
             if champs_faibles_pour_ligne(ligne, seuil):
                 nb_faibles += 1
         if nb_faibles > 0:
@@ -62,7 +64,7 @@ def lignes_a_corriger(session: Session, document_id: int, seuil: float = 0.70) -
     """Weak lines for a document, with a 'champs_faibles' column listing weak field names."""
     lignes = (
         session.query(LigneFacture)
-        .filter(LigneFacture.document_id == document_id)
+        .filter(LigneFacture.document_id == document_id, LigneFacture.supprime != True)
         .order_by(LigneFacture.ligne_numero)
         .all()
     )
@@ -92,21 +94,25 @@ def stats_corrections(session: Session) -> dict:
 
 def historique_corrections(session: Session, document_id: int | None = None) -> pd.DataFrame:
     """Correction log table, optionally filtered by document."""
-    query = session.query(CorrectionLog).order_by(CorrectionLog.corrige_at.desc())
+    query = (
+        session.query(CorrectionLog, Document.fichier)
+        .join(Document, CorrectionLog.document_id == Document.id)
+        .order_by(CorrectionLog.corrige_at.desc())
+    )
     if document_id is not None:
         query = query.filter(CorrectionLog.document_id == document_id)
     entries = query.all()
     if not entries:
         return pd.DataFrame(columns=[
-            "id", "document_id", "ligne_id", "champ",
+            "id", "fichier", "ligne_id", "champ",
             "ancienne_valeur", "nouvelle_valeur",
             "ancienne_confiance", "corrige_par", "corrige_at", "notes",
         ])
     rows = []
-    for e in entries:
+    for e, fichier in entries:
         rows.append({
             "id": e.id,
-            "document_id": e.document_id,
+            "fichier": fichier,
             "ligne_id": e.ligne_id,
             "champ": e.champ,
             "ancienne_valeur": e.ancienne_valeur,
@@ -123,7 +129,7 @@ def detail_confiance_document(session: Session, document_id: int) -> pd.DataFram
     """Per-line, per-field confidence grid for a document. Each cell is the conf value."""
     lignes = (
         session.query(LigneFacture)
-        .filter(LigneFacture.document_id == document_id)
+        .filter(LigneFacture.document_id == document_id, LigneFacture.supprime != True)
         .order_by(LigneFacture.ligne_numero)
         .all()
     )
@@ -181,11 +187,41 @@ def appliquer_correction(
     return logs
 
 
+def supprimer_ligne(
+    session: Session,
+    ligne_id: int,
+    supprime_par: str = "admin",
+    notes: str | None = None,
+) -> CorrectionLog:
+    """Soft-delete a line: mark as supprime, log the action, recalculate confiance_globale."""
+    ligne = session.get(LigneFacture, ligne_id)
+    if ligne is None:
+        raise ValueError(f"Ligne {ligne_id} introuvable")
+
+    ligne.supprime = True
+
+    log = CorrectionLog(
+        ligne_id=ligne.id,
+        document_id=ligne.document_id,
+        champ="__suppression__",
+        ancienne_valeur=f"Ligne {ligne.ligne_numero}: {ligne.type_matiere}",
+        nouvelle_valeur="supprimee",
+        ancienne_confiance=None,
+        corrige_par=supprime_par,
+        notes=notes,
+    )
+    session.add(log)
+    session.flush()
+    recalculer_confiance_globale(session, ligne.document_id)
+    session.commit()
+    return log
+
+
 def recalculer_confiance_globale(session: Session, document_id: int) -> float | None:
-    """Recompute confiance_globale as mean of all non-null conf fields across all lines."""
+    """Recompute confiance_globale as mean of all non-null conf fields across active lines."""
     lignes = (
         session.query(LigneFacture)
-        .filter(LigneFacture.document_id == document_id)
+        .filter(LigneFacture.document_id == document_id, LigneFacture.supprime != True)
         .all()
     )
     values = []
@@ -204,3 +240,73 @@ def recalculer_confiance_globale(session: Session, document_id: int) -> float | 
         doc.confiance_globale = None
     session.flush()
     return doc.confiance_globale
+
+
+# ---------------------------------------------------------------------------
+# Bounding box CRUD
+# ---------------------------------------------------------------------------
+
+def sauvegarder_bbox(
+    session: Session,
+    ligne_id: int,
+    document_id: int,
+    champ: str,
+    page_number: int,
+    x_min: float,
+    y_min: float,
+    x_max: float,
+    y_max: float,
+    source: str = "manual",
+    cree_par: str = "admin",
+    correction_log_id: int | None = None,
+) -> BoundingBox:
+    """Validate normalized coords and persist a bounding box."""
+    for coord_name, val in [("x_min", x_min), ("y_min", y_min), ("x_max", x_max), ("y_max", y_max)]:
+        if not (0.0 <= val <= 1.0):
+            raise ValueError(f"{coord_name}={val} hors de l'intervalle [0, 1]")
+    if x_min >= x_max or y_min >= y_max:
+        raise ValueError("Coordonnees invalides : min doit etre < max")
+
+    bbox = BoundingBox(
+        ligne_id=ligne_id,
+        document_id=document_id,
+        champ=champ,
+        page_number=page_number,
+        x_min=x_min,
+        y_min=y_min,
+        x_max=x_max,
+        y_max=y_max,
+        source=source,
+        cree_par=cree_par,
+        correction_log_id=correction_log_id,
+    )
+    session.add(bbox)
+    session.commit()
+    return bbox
+
+
+def bboxes_pour_page(session: Session, document_id: int, page_number: int) -> list[BoundingBox]:
+    """All bounding boxes for a given document page."""
+    return (
+        session.query(BoundingBox)
+        .filter(BoundingBox.document_id == document_id, BoundingBox.page_number == page_number)
+        .all()
+    )
+
+
+def bboxes_pour_ligne(session: Session, ligne_id: int) -> list[BoundingBox]:
+    """All bounding boxes for a given line."""
+    return (
+        session.query(BoundingBox)
+        .filter(BoundingBox.ligne_id == ligne_id)
+        .all()
+    )
+
+
+def supprimer_bbox(session: Session, bbox_id: int) -> None:
+    """Delete a bounding box by id."""
+    bbox = session.get(BoundingBox, bbox_id)
+    if bbox is None:
+        raise ValueError(f"BoundingBox {bbox_id} introuvable")
+    session.delete(bbox)
+    session.commit()

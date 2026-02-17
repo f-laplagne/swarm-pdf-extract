@@ -80,6 +80,7 @@ class LigneFacture(Base):
     conf_date_arrivee = Column(Float)
     conf_lieu_depart = Column(Float)
     conf_lieu_arrivee = Column(Float)
+    supprime = Column(Boolean, default=False)
 
     document = relationship("Document", back_populates="lignes")
 
@@ -170,6 +171,33 @@ class CorrectionLog(Base):
     __table_args__ = (
         Index("idx_correction_log_ligne", "ligne_id"),
         Index("idx_correction_log_document", "document_id"),
+    )
+
+
+class BoundingBox(Base):
+    __tablename__ = "bounding_boxes"
+
+    id = Column(Integer, primary_key=True)
+    ligne_id = Column(Integer, ForeignKey("lignes_facture.id"), nullable=False)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
+    champ = Column(String, nullable=False)
+    page_number = Column(Integer, nullable=False)
+    x_min = Column(Float, nullable=False)
+    y_min = Column(Float, nullable=False)
+    x_max = Column(Float, nullable=False)
+    y_max = Column(Float, nullable=False)
+    source = Column(String, default="manual")  # "manual" or "extraction"
+    cree_par = Column(String, default="admin")
+    cree_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    correction_log_id = Column(Integer, ForeignKey("correction_log.id"), nullable=True)
+
+    ligne = relationship("LigneFacture")
+    document = relationship("Document")
+    correction_log = relationship("CorrectionLog")
+
+    __table_args__ = (
+        Index("idx_bbox_document_page", "document_id", "page_number"),
+        Index("idx_bbox_ligne_champ", "ligne_id", "champ"),
     )
 
 
