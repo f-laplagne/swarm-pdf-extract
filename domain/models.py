@@ -6,7 +6,7 @@ Only stdlib imports allowed: dataclasses, datetime, enum.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 
@@ -100,3 +100,63 @@ class Document:
     fournisseur: Fournisseur | None = None
     lignes: list[LigneFacture] = field(default_factory=list)
     id: int | None = None
+
+
+@dataclass
+class Anomalie:
+    """An anomaly detected during document validation."""
+
+    code_regle: str
+    description: str
+    severite: NiveauSeverite
+    document_id: int
+    ligne_id: int | None = None
+    details: dict = field(default_factory=dict)
+    id: int | None = None
+
+
+@dataclass
+class EntityMapping:
+    """Maps a raw entity value to its canonical (resolved) form."""
+
+    entity_type: str
+    raw_value: str
+    canonical_value: str
+    statut: StatutMapping = StatutMapping.PENDING_REVIEW
+    confidence: float = 0.0
+    source: str = "manual"
+    id: int | None = None
+
+
+@dataclass
+class MergeAuditEntry:
+    """Audit trail for entity merge / split operations."""
+
+    entity_type: str
+    canonical_value: str
+    merged_values: list[str]
+    action: str
+    timestamp: datetime | None = None
+    id: int | None = None
+
+
+# ── Result Value Objects ────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ClassementFournisseur:
+    """Read-only ranking of a supplier by total spend."""
+
+    nom: str
+    montant_total: float
+    nombre_documents: int
+
+
+@dataclass(frozen=True)
+class ResultatAnomalie:
+    """Read-only result of an anomaly rule check."""
+
+    est_valide: bool
+    code_regle: str
+    description: str
+    details: dict = field(default_factory=dict)

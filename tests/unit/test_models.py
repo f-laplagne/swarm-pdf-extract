@@ -1,6 +1,6 @@
 """Tests for domain models — pure Python, no external dependencies."""
 
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 import pytest
@@ -257,3 +257,188 @@ class TestDocument:
         doc2 = Document(fichier="b.pdf", type_document=TypeDocument.FACTURE)
         doc1.lignes.append(LigneFacture(ligne_numero=1))
         assert len(doc2.lignes) == 0
+
+
+# ── Task 5: Anomalie, EntityMapping, MergeAuditEntry, result VOs ───────
+
+
+class TestAnomalie:
+    def test_minimal_creation(self):
+        from domain.models import Anomalie, NiveauSeverite
+        a = Anomalie(
+            code_regle="PRIX_NEGATIF",
+            description="Prix negatif detecte",
+            severite=NiveauSeverite.ERROR,
+            document_id=1,
+        )
+        assert a.code_regle == "PRIX_NEGATIF"
+        assert a.description == "Prix negatif detecte"
+        assert a.severite is NiveauSeverite.ERROR
+        assert a.document_id == 1
+        assert a.ligne_id is None
+        assert a.details == {}
+        assert a.id is None
+
+    def test_complete_creation(self):
+        from domain.models import Anomalie, NiveauSeverite
+        a = Anomalie(
+            code_regle="ECART_TOTAL",
+            description="Ecart total/lignes",
+            severite=NiveauSeverite.WARNING,
+            document_id=5,
+            ligne_id=3,
+            details={"ecart": 12.50, "seuil": 10.0},
+            id=99,
+        )
+        assert a.ligne_id == 3
+        assert a.details["ecart"] == 12.50
+        assert a.id == 99
+
+    def test_details_default_independent(self):
+        from domain.models import Anomalie, NiveauSeverite
+        a1 = Anomalie(
+            code_regle="R1", description="d", severite=NiveauSeverite.INFO,
+            document_id=1,
+        )
+        a2 = Anomalie(
+            code_regle="R2", description="d", severite=NiveauSeverite.INFO,
+            document_id=2,
+        )
+        a1.details["key"] = "val"
+        assert "key" not in a2.details
+
+
+class TestEntityMapping:
+    def test_minimal_creation(self):
+        from domain.models import EntityMapping, StatutMapping
+        em = EntityMapping(
+            entity_type="fournisseur",
+            raw_value="ACME sas",
+            canonical_value="Acme SAS",
+        )
+        assert em.entity_type == "fournisseur"
+        assert em.raw_value == "ACME sas"
+        assert em.canonical_value == "Acme SAS"
+        assert em.statut is StatutMapping.PENDING_REVIEW
+        assert em.confidence == 0.0
+        assert em.source == "manual"
+        assert em.id is None
+
+    def test_complete_creation(self):
+        from domain.models import EntityMapping, StatutMapping
+        em = EntityMapping(
+            entity_type="fournisseur",
+            raw_value="ACME sas",
+            canonical_value="Acme SAS",
+            statut=StatutMapping.APPROVED,
+            confidence=0.95,
+            source="auto_fuzzy",
+            id=42,
+        )
+        assert em.statut is StatutMapping.APPROVED
+        assert em.confidence == 0.95
+        assert em.source == "auto_fuzzy"
+        assert em.id == 42
+
+
+class TestMergeAuditEntry:
+    def test_minimal_creation(self):
+        from domain.models import MergeAuditEntry
+        entry = MergeAuditEntry(
+            entity_type="fournisseur",
+            canonical_value="Acme SAS",
+            merged_values=["ACME sas", "acme"],
+            action="merge",
+        )
+        assert entry.entity_type == "fournisseur"
+        assert entry.canonical_value == "Acme SAS"
+        assert entry.merged_values == ["ACME sas", "acme"]
+        assert entry.action == "merge"
+        assert entry.timestamp is None
+        assert entry.id is None
+
+    def test_complete_creation(self):
+        from domain.models import MergeAuditEntry
+        ts = datetime(2024, 6, 15, 10, 30, 0)
+        entry = MergeAuditEntry(
+            entity_type="matiere",
+            canonical_value="Sable 0/4",
+            merged_values=["sable 0-4", "SABLE 0/4"],
+            action="split",
+            timestamp=ts,
+            id=7,
+        )
+        assert entry.timestamp == ts
+        assert entry.id == 7
+
+    def test_merged_values_default_independent(self):
+        from domain.models import MergeAuditEntry
+        e1 = MergeAuditEntry(
+            entity_type="f", canonical_value="A",
+            merged_values=["x"], action="merge",
+        )
+        e2 = MergeAuditEntry(
+            entity_type="f", canonical_value="B",
+            merged_values=["y"], action="merge",
+        )
+        e1.merged_values.append("z")
+        assert "z" not in e2.merged_values
+
+
+class TestClassementFournisseur:
+    def test_creation(self):
+        from domain.models import ClassementFournisseur
+        cf = ClassementFournisseur(
+            nom="Acme SAS",
+            montant_total=50000.0,
+            nombre_documents=12,
+        )
+        assert cf.nom == "Acme SAS"
+        assert cf.montant_total == 50000.0
+        assert cf.nombre_documents == 12
+
+    def test_frozen_cannot_mutate(self):
+        from domain.models import ClassementFournisseur
+        cf = ClassementFournisseur(
+            nom="Acme SAS", montant_total=50000.0, nombre_documents=12,
+        )
+        with pytest.raises(AttributeError):
+            cf.nom = "Other"  # type: ignore[misc]
+
+    def test_equality(self):
+        from domain.models import ClassementFournisseur
+        a = ClassementFournisseur(nom="A", montant_total=100.0, nombre_documents=1)
+        b = ClassementFournisseur(nom="A", montant_total=100.0, nombre_documents=1)
+        assert a == b
+
+
+class TestResultatAnomalie:
+    def test_creation(self):
+        from domain.models import ResultatAnomalie
+        ra = ResultatAnomalie(
+            est_valide=False,
+            code_regle="PRIX_NEGATIF",
+            description="Prix negatif",
+        )
+        assert ra.est_valide is False
+        assert ra.code_regle == "PRIX_NEGATIF"
+        assert ra.description == "Prix negatif"
+        assert ra.details == {}
+
+    def test_creation_with_details(self):
+        from domain.models import ResultatAnomalie
+        ra = ResultatAnomalie(
+            est_valide=True,
+            code_regle="OK",
+            description="Valide",
+            details={"info": "all good"},
+        )
+        assert ra.details == {"info": "all good"}
+
+    def test_frozen_cannot_mutate(self):
+        from domain.models import ResultatAnomalie
+        ra = ResultatAnomalie(
+            est_valide=True, code_regle="OK", description="ok",
+        )
+        with pytest.raises(AttributeError):
+            ra.est_valide = False  # type: ignore[misc]
