@@ -7,6 +7,8 @@ of any infrastructure dependency.
 
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,15 +16,18 @@ from dashboard.adapters.outbound.sqlalchemy_models import (
     Document as OrmDocument,
     EntityMapping as OrmEntityMapping,
     Fournisseur as OrmFournisseur,
+    LigneFacture as OrmLigneFacture,
 )
 from domain.models import (
     Document as DomainDocument,
     EntityMapping as DomainEntityMapping,
     Fournisseur as DomainFournisseur,
+    LigneFacture as DomainLigneFacture,
+    ScoreConfiance,
     StatutMapping,
     TypeDocument,
 )
-from domain.ports import DocumentRepository, MappingRepository
+from domain.ports import DocumentRepository, LineItemRepository, MappingRepository
 
 
 class SqlAlchemyMappingRepository(MappingRepository):
@@ -210,5 +215,88 @@ class SqlAlchemyDocumentRepository(DocumentRepository):
             montant_ttc=orm.montant_ttc,
             date_document=orm.date_document,
             fournisseur=fournisseur,
+            id=orm.id,
+        )
+
+
+class SqlAlchemyLineItemRepository(LineItemRepository):
+    """SQLAlchemy adapter for the LineItemRepository port."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    # ── Queries ────────────────────────────────────────────────────────
+
+    def list_by_document(self, document_id: int) -> list[DomainLigneFacture]:
+        """Return all non-deleted lines for a document, ordered by ligne_numero."""
+        stmt = (
+            select(OrmLigneFacture)
+            .where(OrmLigneFacture.document_id == document_id)
+            .where(OrmLigneFacture.supprime == False)  # noqa: E712
+            .order_by(OrmLigneFacture.ligne_numero)
+        )
+        return [self._to_domain(orm) for orm in self._session.scalars(stmt)]
+
+    def list_with_supplier(self) -> list[tuple[DomainLigneFacture, str]]:
+        """Return all non-deleted lines joined with their supplier name.
+
+        Joins lignes -> documents -> fournisseurs.  When a document has no
+        fournisseur the supplier name defaults to ``"Inconnu"``.
+        """
+        stmt = (
+            select(OrmLigneFacture, OrmFournisseur.nom)
+            .join(OrmDocument, OrmLigneFacture.document_id == OrmDocument.id)
+            .outerjoin(OrmFournisseur, OrmDocument.fournisseur_id == OrmFournisseur.id)
+            .where(OrmLigneFacture.supprime == False)  # noqa: E712
+        )
+        result: list[tuple[DomainLigneFacture, str]] = []
+        for row in self._session.execute(stmt):
+            ligne_orm, fournisseur_nom = row
+            result.append((self._to_domain(ligne_orm), fournisseur_nom or "Inconnu"))
+        return result
+
+    # ── Internal helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def _to_domain(orm: OrmLigneFacture) -> DomainLigneFacture:
+        """Convert an ORM LigneFacture row to a domain LigneFacture."""
+        # Parse ISO date strings to date objects if present
+        date_depart = None
+        if orm.date_depart:
+            try:
+                date_depart = date.fromisoformat(orm.date_depart)
+            except (ValueError, TypeError):
+                pass
+
+        date_arrivee = None
+        if orm.date_arrivee:
+            try:
+                date_arrivee = date.fromisoformat(orm.date_arrivee)
+            except (ValueError, TypeError):
+                pass
+
+        confiance = ScoreConfiance(
+            type_matiere=orm.conf_type_matiere or 0.0,
+            unite=orm.conf_unite or 0.0,
+            prix_unitaire=orm.conf_prix_unitaire or 0.0,
+            quantite=orm.conf_quantite or 0.0,
+            prix_total=orm.conf_prix_total or 0.0,
+            date_depart=orm.conf_date_depart or 0.0,
+            date_arrivee=orm.conf_date_arrivee or 0.0,
+            lieu_depart=orm.conf_lieu_depart or 0.0,
+            lieu_arrivee=orm.conf_lieu_arrivee or 0.0,
+        )
+        return DomainLigneFacture(
+            ligne_numero=orm.ligne_numero or 0,
+            type_matiere=orm.type_matiere,
+            unite=orm.unite,
+            prix_unitaire=orm.prix_unitaire,
+            quantite=orm.quantite,
+            prix_total=orm.prix_total,
+            date_depart=date_depart,
+            date_arrivee=date_arrivee,
+            lieu_depart=orm.lieu_depart,
+            lieu_arrivee=orm.lieu_arrivee,
+            confiance=confiance,
             id=orm.id,
         )

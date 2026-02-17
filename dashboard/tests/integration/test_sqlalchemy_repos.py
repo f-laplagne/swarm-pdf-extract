@@ -15,15 +15,19 @@ from dashboard.adapters.outbound.sqlalchemy_models import (
     Document as OrmDocument,
     EntityMapping as OrmEntityMapping,
     Fournisseur as OrmFournisseur,
+    LigneFacture as OrmLigneFacture,
 )
 from dashboard.adapters.outbound.sqlalchemy_repos import (
     SqlAlchemyDocumentRepository,
+    SqlAlchemyLineItemRepository,
     SqlAlchemyMappingRepository,
 )
 from domain.models import (
     Document as DomainDocument,
     EntityMapping as DomainEntityMapping,
     Fournisseur as DomainFournisseur,
+    LigneFacture as DomainLigneFacture,
+    ScoreConfiance,
     StatutMapping,
     TypeDocument,
 )
@@ -489,3 +493,239 @@ class TestSqlAlchemyDocumentRepository:
         repo = SqlAlchemyDocumentRepository(session)
         result = repo.list_all()
         assert result == []
+
+
+class TestSqlAlchemyLineItemRepository:
+    """Integration tests for the LineItemRepository SQLAlchemy adapter."""
+
+    def _make_doc(self, session, fichier="doc.pdf", fournisseur_id=None):
+        """Helper: insert and return an ORM Document."""
+        doc = OrmDocument(
+            fichier=fichier,
+            type_document="facture",
+            confiance_globale=0.8,
+            fournisseur_id=fournisseur_id,
+        )
+        session.add(doc)
+        session.flush()
+        return doc
+
+    def _make_ligne(self, session, document_id, ligne_numero=1, **kwargs):
+        """Helper: insert and return an ORM LigneFacture."""
+        defaults = dict(
+            document_id=document_id,
+            ligne_numero=ligne_numero,
+            type_matiere="Gravier",
+            unite="tonne",
+            prix_unitaire=12.50,
+            quantite=10.0,
+            prix_total=125.0,
+            date_depart="2025-06-01",
+            date_arrivee="2025-06-02",
+            lieu_depart="Paris",
+            lieu_arrivee="Lyon",
+            conf_type_matiere=0.95,
+            conf_unite=0.90,
+            conf_prix_unitaire=0.88,
+            conf_quantite=0.92,
+            conf_prix_total=0.85,
+            conf_date_depart=0.80,
+            conf_date_arrivee=0.75,
+            conf_lieu_depart=0.70,
+            conf_lieu_arrivee=0.65,
+            supprime=False,
+        )
+        defaults.update(kwargs)
+        ligne = OrmLigneFacture(**defaults)
+        session.add(ligne)
+        session.flush()
+        return ligne
+
+    def test_list_by_document(self, session):
+        """list_by_document() should return only lines belonging to the given document."""
+        doc1 = self._make_doc(session, fichier="doc1.pdf")
+        doc2 = self._make_doc(session, fichier="doc2.pdf")
+        self._make_ligne(session, doc1.id, ligne_numero=1, type_matiere="Sable")
+        self._make_ligne(session, doc1.id, ligne_numero=2, type_matiere="Gravier")
+        self._make_ligne(session, doc2.id, ligne_numero=1, type_matiere="Ciment")
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_by_document(doc1.id)
+
+        assert len(result) == 2
+        assert all(isinstance(l, DomainLigneFacture) for l in result)
+        matieres = {l.type_matiere for l in result}
+        assert matieres == {"Sable", "Gravier"}
+
+    def test_list_by_document_excludes_deleted(self, session):
+        """list_by_document() should exclude lines with supprime=True."""
+        doc = self._make_doc(session)
+        self._make_ligne(session, doc.id, ligne_numero=1, supprime=False)
+        self._make_ligne(session, doc.id, ligne_numero=2, supprime=True)
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_by_document(doc.id)
+
+        assert len(result) == 1
+        assert result[0].ligne_numero == 1
+
+    def test_list_by_document_ordered(self, session):
+        """list_by_document() should return lines ordered by ligne_numero."""
+        doc = self._make_doc(session)
+        # Insert out of order
+        self._make_ligne(session, doc.id, ligne_numero=3)
+        self._make_ligne(session, doc.id, ligne_numero=1)
+        self._make_ligne(session, doc.id, ligne_numero=2)
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_by_document(doc.id)
+
+        assert [l.ligne_numero for l in result] == [1, 2, 3]
+
+    def test_list_with_supplier_joins_correctly(self, session):
+        """list_with_supplier() should return (LigneFacture, supplier_name) tuples."""
+        fourn = OrmFournisseur(nom="ACME Corp", adresse="123 Rue de Paris")
+        session.add(fourn)
+        session.flush()
+
+        doc = self._make_doc(session, fournisseur_id=fourn.id)
+        self._make_ligne(session, doc.id, ligne_numero=1, type_matiere="Sable")
+        self._make_ligne(session, doc.id, ligne_numero=2, type_matiere="Gravier")
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_with_supplier()
+
+        assert len(result) == 2
+        for ligne, supplier_name in result:
+            assert isinstance(ligne, DomainLigneFacture)
+            assert supplier_name == "ACME Corp"
+
+    def test_list_with_supplier_no_supplier(self, session):
+        """list_with_supplier() should return 'Inconnu' when doc has no fournisseur."""
+        doc = self._make_doc(session, fournisseur_id=None)
+        self._make_ligne(session, doc.id, ligne_numero=1)
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_with_supplier()
+
+        assert len(result) == 1
+        ligne, supplier_name = result[0]
+        assert isinstance(ligne, DomainLigneFacture)
+        assert supplier_name == "Inconnu"
+
+    def test_list_with_supplier_excludes_deleted(self, session):
+        """list_with_supplier() should exclude lines with supprime=True."""
+        fourn = OrmFournisseur(nom="Supplier A")
+        session.add(fourn)
+        session.flush()
+
+        doc = self._make_doc(session, fournisseur_id=fourn.id)
+        self._make_ligne(session, doc.id, ligne_numero=1, supprime=False)
+        self._make_ligne(session, doc.id, ligne_numero=2, supprime=True)
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_with_supplier()
+
+        assert len(result) == 1
+        ligne, supplier_name = result[0]
+        assert ligne.ligne_numero == 1
+        assert supplier_name == "Supplier A"
+
+    def test_list_by_document_empty(self, session):
+        """list_by_document() should return empty list when no lines exist for document."""
+        doc = self._make_doc(session)
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_by_document(doc.id)
+
+        assert result == []
+
+    def test_to_domain_maps_all_fields(self, session):
+        """Verify ORM-to-domain conversion preserves all fields including confidence."""
+        doc = self._make_doc(session)
+        self._make_ligne(
+            session,
+            doc.id,
+            ligne_numero=5,
+            type_matiere="Beton B25",
+            unite="m3",
+            prix_unitaire=85.0,
+            quantite=20.0,
+            prix_total=1700.0,
+            date_depart="2025-03-15",
+            date_arrivee="2025-03-16",
+            lieu_depart="Marseille",
+            lieu_arrivee="Nice",
+            conf_type_matiere=0.95,
+            conf_unite=0.90,
+            conf_prix_unitaire=0.88,
+            conf_quantite=0.92,
+            conf_prix_total=0.85,
+            conf_date_depart=0.80,
+            conf_date_arrivee=0.75,
+            conf_lieu_depart=0.70,
+            conf_lieu_arrivee=0.65,
+        )
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_by_document(doc.id)
+
+        assert len(result) == 1
+        l = result[0]
+        assert l.ligne_numero == 5
+        assert l.type_matiere == "Beton B25"
+        assert l.unite == "m3"
+        assert l.prix_unitaire == 85.0
+        assert l.quantite == 20.0
+        assert l.prix_total == 1700.0
+        assert l.date_depart == date(2025, 3, 15)
+        assert l.date_arrivee == date(2025, 3, 16)
+        assert l.lieu_depart == "Marseille"
+        assert l.lieu_arrivee == "Nice"
+        assert l.id is not None
+        # Check confidence scores
+        assert l.confiance.type_matiere == 0.95
+        assert l.confiance.unite == 0.90
+        assert l.confiance.prix_unitaire == 0.88
+        assert l.confiance.quantite == 0.92
+        assert l.confiance.prix_total == 0.85
+        assert l.confiance.date_depart == 0.80
+        assert l.confiance.date_arrivee == 0.75
+        assert l.confiance.lieu_depart == 0.70
+        assert l.confiance.lieu_arrivee == 0.65
+
+    def test_to_domain_handles_null_dates(self, session):
+        """Verify ORM-to-domain conversion handles None date strings gracefully."""
+        doc = self._make_doc(session)
+        self._make_ligne(
+            session,
+            doc.id,
+            ligne_numero=1,
+            date_depart=None,
+            date_arrivee=None,
+        )
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_by_document(doc.id)
+
+        assert len(result) == 1
+        assert result[0].date_depart is None
+        assert result[0].date_arrivee is None
+
+    def test_to_domain_handles_invalid_dates(self, session):
+        """Verify ORM-to-domain conversion handles malformed date strings."""
+        doc = self._make_doc(session)
+        self._make_ligne(
+            session,
+            doc.id,
+            ligne_numero=1,
+            date_depart="not-a-date",
+            date_arrivee="invalid",
+        )
+
+        repo = SqlAlchemyLineItemRepository(session)
+        result = repo.list_by_document(doc.id)
+
+        assert len(result) == 1
+        assert result[0].date_depart is None
+        assert result[0].date_arrivee is None
