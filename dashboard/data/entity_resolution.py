@@ -14,6 +14,9 @@ import pandas as pd
 from sqlalchemy import select, union_all
 from sqlalchemy.orm import Session
 
+from domain.entity_resolution import resolve_value
+from domain.entity_resolution import expand_canonical as domain_expand_canonical
+
 from dashboard.data.models import (
     Document,
     EntityMapping,
@@ -89,41 +92,14 @@ def resolve_column(
 ) -> pd.DataFrame:
     """Add a ``resolved_{column}`` column to *df*.
 
-    Resolution order for each value:
-    1. **Exact match** -- ``value`` appears as a key in *mappings*.
-    2. **Prefix match** -- ``value`` starts with a key in *prefix_mappings*
-       (longest prefix wins).
-    3. **No match** -- the original value is kept as-is.
-
-    The original DataFrame is returned (modified in place) with the new column
-    appended.
+    Resolution delegated to :func:`domain.entity_resolution.resolve_value`.
     """
     prefix_mappings = prefix_mappings or {}
 
-    # Pre-sort prefix keys by descending length so that the first match is the
-    # longest (most specific) prefix.
-    sorted_prefixes = sorted(prefix_mappings.keys(), key=len, reverse=True)
-
-    def _resolve(value):
-        if pd.isna(value) or value is None:
-            return value
-
-        val = str(value)
-
-        # 1. Exact match
-        if val in mappings:
-            return mappings[val]
-
-        # 2. Prefix match (longest prefix first)
-        for prefix in sorted_prefixes:
-            if val.startswith(prefix):
-                return prefix_mappings[prefix]
-
-        # 3. No match
-        return val
-
     resolved_col = f"resolved_{column}"
-    df[resolved_col] = df[column].map(_resolve)
+    df[resolved_col] = df[column].map(
+        lambda v: resolve_value(v, mappings, prefix_mappings)
+    )
     return df
 
 
@@ -139,18 +115,11 @@ def expand_canonical(
 
     The canonical value itself is always included in the result so that SQL
     ``IN`` clauses match both raw variants and the canonical name.
+
+    Resolution delegated to :func:`domain.entity_resolution.expand_canonical`.
     """
-    stmt = (
-        select(EntityMapping.raw_value)
-        .where(EntityMapping.entity_type == entity_type)
-        .where(EntityMapping.canonical_value == canonical)
-        .where(EntityMapping.status == "approved")
-    )
-    raw_values = [row.raw_value for row in session.execute(stmt)]
-    # Always include the canonical value itself
-    if canonical not in raw_values:
-        raw_values.insert(0, canonical)
-    return raw_values
+    reverse = get_reverse_mappings(session, entity_type)
+    return domain_expand_canonical(canonical, reverse)
 
 
 # ---------------------------------------------------------------------------

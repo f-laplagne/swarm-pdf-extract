@@ -1,6 +1,14 @@
+import os
+import sys
+
+# Ensure project root is in sys.path so "from dashboard.*" imports work
+# regardless of where Streamlit is launched from (cd dashboard/ or project root)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import streamlit as st
 import yaml
-import os
 
 from dashboard.data.db import init_db, get_engine, get_session
 
@@ -25,6 +33,27 @@ init_db(engine)
 if "engine" not in st.session_state:
     st.session_state.engine = engine
     st.session_state.config = config
+
+    # Composition root: instantiate adapters
+    from dashboard.adapters.outbound.redis_cache import RedisCacheAdapter
+
+    # Session factory for repositories (pages create repos from session)
+    st.session_state.get_session = get_session
+
+    # Cache adapter (Redis if available, otherwise no-op)
+    redis_client = None
+    redis_url = config.get("cache", {}).get("redis_url") or os.environ.get(
+        "REDIS_URL"
+    )
+    if redis_url:
+        try:
+            import redis
+
+            redis_client = redis.from_url(redis_url)
+            redis_client.ping()
+        except Exception:
+            redis_client = None
+    st.session_state.cache = RedisCacheAdapter(redis_client=redis_client)
 
 st.title("\U0001F4CA Rationalize")
 st.markdown("### Outil d'Analyse & Optimisation des Achats et Logistique")

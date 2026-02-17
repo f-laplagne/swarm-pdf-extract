@@ -1,3 +1,10 @@
+"""Dashboard purchasing analytics -- facade over domain/analytics/achats.py.
+
+This module uses pandas DataFrames for Streamlit compatibility.
+Domain-pure equivalents: domain.analytics.achats (weighted_average_price,
+rank_suppliers_by_amount, fragmentation_index).
+"""
+
 import pandas as pd
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -26,7 +33,7 @@ def _lignes_avec_fournisseur(session: Session) -> pd.DataFrame:
         )
         .join(Document, LigneFacture.document_id == Document.id)
         .join(Fournisseur, Document.fournisseur_id == Fournisseur.id)
-        .filter(LigneFacture.type_matiere.isnot(None))
+        .filter(LigneFacture.type_matiere.isnot(None), LigneFacture.supprime != True)
         .all()
     )
     df = pd.DataFrame(rows, columns=[
