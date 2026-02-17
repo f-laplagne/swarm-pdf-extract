@@ -1,5 +1,6 @@
 """Tests for domain models — pure Python, no external dependencies."""
 
+from datetime import date
 from enum import Enum
 
 import pytest
@@ -121,3 +122,138 @@ class TestScoreConfiance:
         a = ScoreConfiance(type_matiere=0.9, unite=0.8)
         b = ScoreConfiance(type_matiere=0.9, unite=0.8)
         assert a == b
+
+
+# ── Task 4: LigneFacture, Fournisseur, Document entity tests ──────────
+
+
+class TestLigneFacture:
+    def test_minimal_creation(self):
+        from domain.models import LigneFacture
+        ligne = LigneFacture(ligne_numero=1)
+        assert ligne.ligne_numero == 1
+        assert ligne.type_matiere is None
+        assert ligne.unite is None
+        assert ligne.prix_unitaire is None
+        assert ligne.quantite is None
+        assert ligne.prix_total is None
+        assert ligne.date_depart is None
+        assert ligne.date_arrivee is None
+        assert ligne.lieu_depart is None
+        assert ligne.lieu_arrivee is None
+        assert ligne.id is None
+
+    def test_default_confiance(self):
+        from domain.models import LigneFacture, ScoreConfiance
+        ligne = LigneFacture(ligne_numero=1)
+        assert ligne.confiance == ScoreConfiance()
+
+    def test_complete_creation(self):
+        from domain.models import LigneFacture, ScoreConfiance
+        ligne = LigneFacture(
+            ligne_numero=3,
+            type_matiere="sable",
+            unite="tonne",
+            prix_unitaire=12.50,
+            quantite=100.0,
+            prix_total=1250.0,
+            date_depart=date(2024, 1, 15),
+            date_arrivee=date(2024, 1, 16),
+            lieu_depart="Paris",
+            lieu_arrivee="Lyon",
+            confiance=ScoreConfiance(type_matiere=0.95),
+            id=42,
+        )
+        assert ligne.ligne_numero == 3
+        assert ligne.type_matiere == "sable"
+        assert ligne.unite == "tonne"
+        assert ligne.prix_unitaire == 12.50
+        assert ligne.quantite == 100.0
+        assert ligne.prix_total == 1250.0
+        assert ligne.date_depart == date(2024, 1, 15)
+        assert ligne.date_arrivee == date(2024, 1, 16)
+        assert ligne.lieu_depart == "Paris"
+        assert ligne.lieu_arrivee == "Lyon"
+        assert ligne.confiance.type_matiere == 0.95
+        assert ligne.id == 42
+
+    def test_mutable(self):
+        from domain.models import LigneFacture
+        ligne = LigneFacture(ligne_numero=1)
+        ligne.type_matiere = "gravier"
+        assert ligne.type_matiere == "gravier"
+
+
+class TestFournisseur:
+    def test_minimal_creation(self):
+        from domain.models import Fournisseur
+        f = Fournisseur(nom="Acme SAS")
+        assert f.nom == "Acme SAS"
+        assert f.adresse is None
+        assert f.id is None
+
+    def test_complete_creation(self):
+        from domain.models import Fournisseur
+        f = Fournisseur(nom="Acme SAS", adresse="10 rue de Paris", id=7)
+        assert f.nom == "Acme SAS"
+        assert f.adresse == "10 rue de Paris"
+        assert f.id == 7
+
+
+class TestDocument:
+    def test_minimal_creation(self):
+        from domain.models import Document, TypeDocument
+        doc = Document(fichier="facture.pdf", type_document=TypeDocument.FACTURE)
+        assert doc.fichier == "facture.pdf"
+        assert doc.type_document is TypeDocument.FACTURE
+        assert doc.confiance_globale == 0.0
+        assert doc.montant_ht is None
+        assert doc.montant_tva is None
+        assert doc.montant_ttc is None
+        assert doc.date_document is None
+        assert doc.fournisseur is None
+        assert doc.lignes == []
+        assert doc.id is None
+
+    def test_complete_creation(self):
+        from domain.models import Document, Fournisseur, TypeDocument
+        fournisseur = Fournisseur(nom="Acme SAS")
+        doc = Document(
+            fichier="facture.pdf",
+            type_document=TypeDocument.FACTURE,
+            confiance_globale=0.85,
+            montant_ht=1000.0,
+            montant_tva=200.0,
+            montant_ttc=1200.0,
+            date_document=date(2024, 3, 15),
+            fournisseur=fournisseur,
+            id=1,
+        )
+        assert doc.confiance_globale == 0.85
+        assert doc.montant_ht == 1000.0
+        assert doc.montant_tva == 200.0
+        assert doc.montant_ttc == 1200.0
+        assert doc.date_document == date(2024, 3, 15)
+        assert doc.fournisseur is fournisseur
+        assert doc.id == 1
+
+    def test_document_with_lignes(self):
+        from domain.models import Document, LigneFacture, TypeDocument
+        ligne1 = LigneFacture(ligne_numero=1, type_matiere="sable")
+        ligne2 = LigneFacture(ligne_numero=2, type_matiere="gravier")
+        doc = Document(
+            fichier="facture.pdf",
+            type_document=TypeDocument.FACTURE,
+            lignes=[ligne1, ligne2],
+        )
+        assert len(doc.lignes) == 2
+        assert doc.lignes[0].type_matiere == "sable"
+        assert doc.lignes[1].type_matiere == "gravier"
+
+    def test_lignes_default_independent(self):
+        """Each Document should get its own lignes list (no shared mutable default)."""
+        from domain.models import Document, LigneFacture, TypeDocument
+        doc1 = Document(fichier="a.pdf", type_document=TypeDocument.FACTURE)
+        doc2 = Document(fichier="b.pdf", type_document=TypeDocument.FACTURE)
+        doc1.lignes.append(LigneFacture(ligne_numero=1))
+        assert len(doc2.lignes) == 0
