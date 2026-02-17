@@ -3,6 +3,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from dashboard.data.models import Document, LigneFacture, Fournisseur, Anomalie
+from domain.anomaly_rules import (
+    check_calculation_coherence as domain_check_calc,
+    check_date_order as domain_check_date,
+    check_low_confidence as domain_check_conf,
+)
+from domain.models import LigneFacture as DomainLigne
 
 
 def _check_calc_coherence(session: Session, rule: dict) -> list[Anomalie]:
@@ -16,25 +22,31 @@ def _check_calc_coherence(session: Session, rule: dict) -> list[Anomalie]:
             LigneFacture.prix_unitaire.isnot(None),
             LigneFacture.quantite.isnot(None),
             LigneFacture.prix_total.isnot(None),
+            LigneFacture.supprime != True,
         )
         .all()
     )
 
     for ligne in lignes:
-        expected = ligne.prix_unitaire * ligne.quantite
-        if ligne.prix_total == 0:
-            continue
-        ecart = abs(expected - ligne.prix_total) / abs(ligne.prix_total)
-        if ecart > tolerance:
+        domain_ligne = DomainLigne(
+            ligne_numero=ligne.ligne_numero or 0,
+            prix_unitaire=ligne.prix_unitaire,
+            quantite=ligne.quantite,
+            prix_total=ligne.prix_total,
+        )
+        result = domain_check_calc(domain_ligne, tolerance)
+        if not result.est_valide:
+            attendu = result.details.get("attendu")
+            reel = result.details.get("reel")
             anomalies.append(Anomalie(
                 document_id=ligne.document_id,
                 ligne_id=ligne.id,
                 regle_id=rule["id"],
                 type_anomalie=rule["type"],
                 severite=rule["severite"],
-                description=f"PU({ligne.prix_unitaire}) x Qte({ligne.quantite}) = {expected:.2f} != Total({ligne.prix_total})",
-                valeur_attendue=f"{expected:.2f}",
-                valeur_trouvee=f"{ligne.prix_total:.2f}",
+                description=result.description,
+                valeur_attendue=f"{attendu:.2f}" if attendu is not None else "",
+                valeur_trouvee=f"{reel:.2f}" if reel is not None else "",
             ))
 
     return anomalies
@@ -49,21 +61,28 @@ def _check_date_invalide(session: Session, rule: dict) -> list[Anomalie]:
         .filter(
             LigneFacture.date_depart.isnot(None),
             LigneFacture.date_arrivee.isnot(None),
+            LigneFacture.supprime != True,
         )
         .all()
     )
 
     for ligne in lignes:
-        if ligne.date_arrivee < ligne.date_depart:
+        domain_ligne = DomainLigne(
+            ligne_numero=ligne.ligne_numero or 0,
+            date_depart=ligne.date_depart,
+            date_arrivee=ligne.date_arrivee,
+        )
+        result = domain_check_date(domain_ligne)
+        if not result.est_valide:
             anomalies.append(Anomalie(
                 document_id=ligne.document_id,
                 ligne_id=ligne.id,
                 regle_id=rule["id"],
                 type_anomalie=rule["type"],
                 severite=rule["severite"],
-                description=f"Date arrivee ({ligne.date_arrivee}) avant depart ({ligne.date_depart})",
-                valeur_attendue=f">= {ligne.date_depart}",
-                valeur_trouvee=ligne.date_arrivee,
+                description=result.description,
+                valeur_attendue=f">= {result.details.get('depart', '')}",
+                valeur_trouvee=result.details.get("arrivee", ""),
             ))
 
     return anomalies
@@ -76,15 +95,17 @@ def _check_low_confidence(session: Session, rule: dict) -> list[Anomalie]:
 
     docs = session.query(Document).filter(Document.confiance_globale < seuil).all()
     for doc in docs:
-        anomalies.append(Anomalie(
-            document_id=doc.id,
-            regle_id=rule["id"],
-            type_anomalie=rule["type"],
-            severite=rule["severite"],
-            description=f"Confiance globale {doc.confiance_globale:.2f} < seuil {seuil}",
-            valeur_attendue=f">= {seuil}",
-            valeur_trouvee=f"{doc.confiance_globale:.2f}",
-        ))
+        result = domain_check_conf(doc.confiance_globale, seuil)
+        if not result.est_valide:
+            anomalies.append(Anomalie(
+                document_id=doc.id,
+                regle_id=rule["id"],
+                type_anomalie=rule["type"],
+                severite=rule["severite"],
+                description=result.description,
+                valeur_attendue=f">= {seuil}",
+                valeur_trouvee=f"{doc.confiance_globale:.2f}",
+            ))
 
     return anomalies
 
