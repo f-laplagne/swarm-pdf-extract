@@ -20,3 +20,10 @@ def resolve_value(value, mappings, prefix_mappings=None):
             if val.startswith(prefix):
                 return prefix_mappings[prefix]
     return val
+
+
+def expand_canonical(canonical, reverse_mappings):
+    """Return all raw values + canonical, sorted."""
+    values = set(reverse_mappings.get(canonical, []))
+    values.add(canonical)
+    return sorted(values)
