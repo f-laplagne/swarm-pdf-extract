@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 
 from domain.models import (
     Anomalie,
+    Correction,
     Document,
     EntityMapping,
     Fournisseur,
@@ -96,6 +97,16 @@ class AuditRepository(ABC):
 
     @abstractmethod
     def list_by_type(self, entity_type: str) -> list[MergeAuditEntry]: ...
+
+
+class CorrectionPort(ABC):
+    """Persistence port for field-level corrections."""
+
+    @abstractmethod
+    def sauvegarder(self, correction: Correction) -> Correction: ...
+
+    @abstractmethod
+    def historique(self, champ: str, valeur_originale: str) -> list[Correction]: ...
 
 
 # ── Infrastructure Ports ──────────────────────────────────────────────────
