@@ -140,6 +140,29 @@ class MergeAuditEntry:
     id: int | None = None
 
 
+class CorrectionStatut(Enum):
+    """Status of a manual correction."""
+
+    APPLIQUEE = "appliquee"
+    REJETEE = "rejetee"
+
+
+@dataclass
+class Correction:
+    """A human correction applied to an extracted field."""
+
+    ligne_id: int
+    champ: str
+    valeur_originale: str | None
+    valeur_corrigee: str
+    confiance_originale: float | None
+    corrige_par: str
+    statut: CorrectionStatut = CorrectionStatut.APPLIQUEE
+    notes: str | None = None
+    timestamp: datetime | None = None
+    id: int | None = None
+
+
 # ── Result Value Objects ────────────────────────────────────────────────
 
 
