@@ -29,6 +29,40 @@ def champs_faibles_pour_ligne(ligne: LigneFacture, seuil: float = 0.70) -> list[
     return faibles
 
 
+def suggestion_pour_champ(
+    session: Session,
+    champ: str,
+    valeur_originale: str,
+) -> str | None:
+    """Return the most frequent historical correction for this (champ, valeur_originale) pair.
+
+    Delegates ranking logic to domain.CorrectionService.suggerer().
+    """
+    from domain.correction_service import CorrectionService
+    from domain.models import Correction as DomainCorrection
+
+    logs = (
+        session.query(CorrectionLog)
+        .filter(
+            CorrectionLog.champ == champ,
+            CorrectionLog.ancienne_valeur == str(valeur_originale),
+        )
+        .all()
+    )
+    historique = [
+        DomainCorrection(
+            ligne_id=log.ligne_id,
+            champ=log.champ,
+            valeur_originale=log.ancienne_valeur,
+            valeur_corrigee=log.nouvelle_valeur or "",
+            confiance_originale=log.ancienne_confiance,
+            corrige_par=log.corrige_par or "admin",
+        )
+        for log in logs
+    ]
+    return CorrectionService.suggerer(champ, str(valeur_originale), historique)
+
+
 def documents_a_corriger(session: Session, seuil: float = 0.70) -> pd.DataFrame:
     """Documents with at least one line having any confidence field below seuil."""
     docs = session.query(Document).join(Document.lignes).all()
@@ -215,6 +249,78 @@ def supprimer_ligne(
     recalculer_confiance_globale(session, ligne.document_id)
     session.commit()
     return log
+
+
+def propager_correction(
+    session: Session,
+    champ: str,
+    valeur_originale: str,
+    valeur_corrigee: str,
+    seuil: float = 0.70,
+    corrige_par: str = "admin",
+    notes: str | None = None,
+) -> int:
+    """Apply a correction to all active lines sharing the same raw value and low confidence.
+
+    Uses CorrectionService.lignes_a_propager() for eligibility logic.
+    Returns the count of lines corrected.
+    """
+    from domain.correction_service import CorrectionService
+
+    lignes_orm = (
+        session.query(LigneFacture)
+        .filter(LigneFacture.supprime != True)
+        .all()
+    )
+
+    conf_par_ligne = {
+        l.ligne_numero: getattr(l, f"conf_{champ}", None)
+        for l in lignes_orm
+    }
+
+    class _Proxy:
+        def __init__(self, orm_obj):
+            self._orm = orm_obj
+            self.ligne_numero = orm_obj.ligne_numero
+
+        def __getattr__(self, name):
+            return getattr(self._orm, name)
+
+    proxies = [_Proxy(l) for l in lignes_orm]
+    eligible = CorrectionService.lignes_a_propager(
+        champ=champ,
+        valeur_originale=valeur_originale,
+        lignes=proxies,
+        conf_par_ligne=conf_par_ligne,
+        seuil=seuil,
+    )
+
+    count = 0
+    affected_document_ids = set()
+    for proxy in eligible:
+        ligne = session.get(LigneFacture, proxy._orm.id)
+        if ligne is None:
+            continue
+        setattr(ligne, champ, valeur_corrigee)
+        setattr(ligne, f"conf_{champ}", 1.0)
+        affected_document_ids.add(ligne.document_id)
+        session.add(CorrectionLog(
+            ligne_id=ligne.id,
+            document_id=ligne.document_id,
+            champ=champ,
+            ancienne_valeur=valeur_originale,
+            nouvelle_valeur=valeur_corrigee,
+            ancienne_confiance=conf_par_ligne.get(ligne.ligne_numero),
+            corrige_par=corrige_par,
+            notes=notes or "Propagation depuis correction manuelle",
+        ))
+        count += 1
+
+    session.flush()
+    for doc_id in affected_document_ids:
+        recalculer_confiance_globale(session, doc_id)
+    session.commit()
+    return count
 
 
 def recalculer_confiance_globale(session: Session, document_id: int) -> float | None:

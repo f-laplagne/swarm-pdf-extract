@@ -36,8 +36,10 @@ from dashboard.analytics.corrections import (
     documents_a_corriger,
     historique_corrections,
     lignes_a_corriger,
+    propager_correction,
     sauvegarder_bbox,
     stats_corrections,
+    suggestion_pour_champ,
     supprimer_ligne,
 )
 from dashboard.components.data_table import data_table
@@ -851,8 +853,11 @@ with tab_corriger:
                             with col:
                                 conf_display = f"{conf_val:.0%}" if conf_val is not None else "N/A"
                                 if is_weak:
+                                    current_str = str(current_val) if current_val is not None else ""
+                                    suggestion = suggestion_pour_champ(session, field, current_str) if current_str else None
+                                    suggestion_label = f" → **{suggestion}**" if suggestion else ""
                                     st.markdown(
-                                        f"**{field}** &nbsp; :red[conf: {conf_display}]"
+                                        f"**{field}** &nbsp; :red[conf: {conf_display}]{suggestion_label}"
                                     )
                                 else:
                                     st.markdown(
@@ -961,6 +966,33 @@ with tab_corriger:
                             st.rerun()
                         else:
                             st.warning("Aucune annotation valide a sauvegarder.")
+
+                    st.markdown("---")
+                    st.subheader("Propagation en masse")
+                    st.caption("Applique la meme correction a toutes les lignes ayant la meme valeur brute et une confiance faible.")
+
+                    with st.expander("Propager une correction"):
+                        prop_champ = st.selectbox(
+                            "Champ", options=EDITABLE_FIELDS, key="prop_champ_select",
+                        )
+                        prop_originale = st.text_input("Valeur originale (brute)", key="prop_originale")
+                        prop_corrigee = st.text_input("Valeur corrigee (cible)", key="prop_corrigee")
+                        prop_seuil = st.slider(
+                            "Seuil de confiance max", 0.0, 1.0, 0.70, 0.05, key="prop_seuil",
+                        )
+                        if st.button("Propager", type="secondary", key="prop_btn"):
+                            if prop_originale.strip() and prop_corrigee.strip():
+                                n = propager_correction(
+                                    session,
+                                    champ=prop_champ,
+                                    valeur_originale=prop_originale.strip(),
+                                    valeur_corrigee=prop_corrigee.strip(),
+                                    seuil=prop_seuil,
+                                )
+                                st.success(f"{n} ligne(s) corrigee(s) par propagation.")
+                                st.rerun()
+                            else:
+                                st.warning("Renseignez la valeur originale et la valeur corrigee.")
 
 # ============================================================
 # Tab 3: Historique
