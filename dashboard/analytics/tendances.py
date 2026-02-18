@@ -43,6 +43,7 @@ def evolution_prix_matiere(
         .filter(
             LigneFacture.date_depart.isnot(None),
             LigneFacture.prix_unitaire.isnot(None),
+            LigneFacture.supprime != True,
         )
         .all()
     )
@@ -75,6 +76,7 @@ def _lignes_avec_delai(session: Session) -> pd.DataFrame:
         .filter(
             LigneFacture.date_depart.isnot(None),
             LigneFacture.date_arrivee.isnot(None),
+            LigneFacture.supprime != True,
         )
         .all()
     )

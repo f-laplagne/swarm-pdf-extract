@@ -21,6 +21,7 @@ def _lignes_logistiques(session: Session) -> pd.DataFrame:
         .filter(
             LigneFacture.lieu_depart.isnot(None),
             LigneFacture.lieu_arrivee.isnot(None),
+            LigneFacture.supprime != True,
         )
         .all()
     )

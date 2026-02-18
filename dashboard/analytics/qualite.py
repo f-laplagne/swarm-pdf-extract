@@ -37,7 +37,7 @@ def confiance_par_champ(session: Session) -> pd.DataFrame:
             func.min(col),
             func.max(col),
             func.count(col),
-        ).filter(col.isnot(None)).one()
+        ).filter(col.isnot(None), LigneFacture.supprime != True).one()
         results[field_name] = {
             "moyenne": row[0] or 0,
             "min": row[1] or 0,

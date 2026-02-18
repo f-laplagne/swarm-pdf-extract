@@ -231,11 +231,14 @@ with tab_merge:
 
     all_raw = _get_raw_values(merge_type)
 
+    # Use entity type in widget keys to avoid stale state when switching types
+    _k = merge_type
+
     if all_raw:
         selected_values = st.multiselect(
             "Selectionner 2+ valeurs a fusionner",
             options=all_raw,
-            key="merge_multiselect",
+            key=f"merge_multiselect_{_k}",
         )
 
         # Primary: pick one of the selected values as merge target
@@ -243,7 +246,7 @@ with tab_merge:
             chosen_value = st.selectbox(
                 "Conserver sous le nom",
                 options=selected_values,
-                key="merge_chosen_value",
+                key=f"merge_chosen_value_{_k}",
                 help="Les autres valeurs seront fusionnees vers celle-ci.",
             )
         else:
@@ -252,14 +255,14 @@ with tab_merge:
         # Optional: override with a custom canonical name
         use_custom = st.checkbox(
             "Utiliser un nom personnalise a la place",
-            key="merge_use_custom",
+            key=f"merge_use_custom_{_k}",
         )
         custom_canonical = ""
         if use_custom:
             custom_canonical = st.text_input(
                 "Nom personnalise",
                 value="",
-                key="merge_canonical_input",
+                key=f"merge_canonical_input_{_k}",
             )
 
         canonical_name = custom_canonical.strip() if use_custom and custom_canonical.strip() else chosen_value
@@ -268,14 +271,14 @@ with tab_merge:
             "Mode de correspondance",
             ["Exact", "Prefix"],
             horizontal=True,
-            key="merge_match_mode",
+            key=f"merge_match_mode_{_k}",
             help="Prefix : les valeurs commencant par la valeur brute seront resolues vers le canonique.",
         )
         match_mode_val = "exact" if match_mode == "Exact" else "prefix"
 
         notes = st.text_area(
             "Notes (optionnel)",
-            key="merge_notes",
+            key=f"merge_notes_{_k}",
             height=80,
         )
 
@@ -283,7 +286,7 @@ with tab_merge:
 
         if can_merge:
             st.info(f"Resultat : les valeurs seront fusionnees vers **{canonical_name}**")
-            if st.button("Fusionner", key="btn_merge", type="primary"):
+            if st.button("Fusionner", key=f"btn_merge_{_k}", type="primary"):
                 try:
                     audit = merge_entities(
                         session=session,
