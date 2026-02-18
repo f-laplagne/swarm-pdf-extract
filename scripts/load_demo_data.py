@@ -26,6 +26,14 @@ def main():
     init_db(engine)
 
     with Session(engine) as session:
+        # Idempotency check
+        existing = session.query(Document).filter(
+            Document.fichier == "FACTURE_DEMO_001.pdf"
+        ).first()
+        if existing:
+            print("Demo data already loaded. Nothing to do.")
+            return
+
         # Fournisseurs
         f1 = Fournisseur(nom="Transport Durand SARL")
         f2 = Fournisseur(nom="Chimex SA")
