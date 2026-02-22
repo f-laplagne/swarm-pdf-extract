@@ -1,5 +1,10 @@
 import os
 import sys
+import threading
+import socket
+import functools
+import http.server
+from pathlib import Path
 
 # Ensure project root is in sys.path so "from dashboard.*" imports work
 # regardless of where Streamlit is launched from (cd dashboard/ or project root)
@@ -55,6 +60,29 @@ if "engine" not in st.session_state:
             redis_client = None
     st.session_state.cache = RedisCacheAdapter(redis_client=redis_client)
 
+    # ── Mini serveur HTTP pour les PDFs (Vérification PDF) ──────────────────
+    # Sert les fichiers depuis samples/ sur un port dédié, utilisé par PDF.js
+    PDF_SERVER_PORT = 8504
+    SAMPLES_DIR = Path(_PROJECT_ROOT) / "samples"
+
+    def _port_free(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(("localhost", port)) != 0
+
+    class _CORSHandler(http.server.SimpleHTTPRequestHandler):
+        def end_headers(self):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            super().end_headers()
+        def log_message(self, *_):
+            pass
+
+    if _port_free(PDF_SERVER_PORT):
+        handler = functools.partial(_CORSHandler, directory=str(SAMPLES_DIR))
+        srv = http.server.HTTPServer(("localhost", PDF_SERVER_PORT), handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    st.session_state.pdf_server_port = PDF_SERVER_PORT
+
 st.title("\U0001F4CA Rationalize")
 st.markdown("### Outil d'Analyse & Optimisation des Achats et Logistique")
 st.markdown("---")
@@ -70,4 +98,5 @@ st.markdown("""
 - **Transport** -- Visualisation des routes d'expedition sur carte
 - **Corrections** -- Correction manuelle des extractions faibles
 - **Admin** -- Ingestion et configuration
+- **Vérification PDF** -- Comparaison PDF original / données extraites
 """)
