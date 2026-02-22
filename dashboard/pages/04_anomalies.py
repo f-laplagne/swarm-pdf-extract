@@ -11,6 +11,9 @@ from dashboard.components.data_table import data_table
 import pandas as pd
 
 st.set_page_config(page_title="Anomalies", page_icon="\u26A0\uFE0F", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\u26A0\uFE0F Detection d'Anomalies")
 
 engine = st.session_state.get("engine")

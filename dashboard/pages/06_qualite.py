@@ -9,6 +9,9 @@ from dashboard.components.charts import radar_chart, bar_chart
 from dashboard.components.data_table import data_table
 
 st.set_page_config(page_title="Qualite", page_icon="\U0001F50D", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\U0001F50D Qualite des Donnees")
 
 engine = st.session_state.get("engine")

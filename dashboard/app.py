@@ -16,6 +16,7 @@ import streamlit as st
 import yaml
 
 from dashboard.data.db import init_db, get_engine, get_session
+from dashboard.styles.theme import inject_theme
 
 # Page config
 st.set_page_config(
@@ -24,6 +25,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+inject_theme()
 
 # Load config
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.yaml")

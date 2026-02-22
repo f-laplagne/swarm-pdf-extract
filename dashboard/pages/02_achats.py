@@ -9,6 +9,9 @@ from dashboard.components.charts import bar_chart, scatter_chart
 from dashboard.components.data_table import data_table
 
 st.set_page_config(page_title="Achats", page_icon="\U0001F4B0", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\U0001F4B0 Rationalisation Achats")
 
 engine = st.session_state.get("engine")

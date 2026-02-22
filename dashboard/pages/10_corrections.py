@@ -46,6 +46,9 @@ from dashboard.components.data_table import data_table
 from dashboard.components.kpi_card import kpi_row
 
 st.set_page_config(page_title="Corrections manuelles", page_icon="\u270F\uFE0F", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\u270F\uFE0F Corrections manuelles")
 
 engine = st.session_state.get("engine")

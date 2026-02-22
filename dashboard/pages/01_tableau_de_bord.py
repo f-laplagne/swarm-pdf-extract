@@ -12,6 +12,9 @@ from dashboard.components.kpi_card import kpi_row
 from dashboard.components.charts import bar_chart
 
 st.set_page_config(page_title="Tableau de bord", page_icon="\U0001F3E0", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\U0001F3E0 Tableau de bord")
 
 engine = st.session_state.get("engine")

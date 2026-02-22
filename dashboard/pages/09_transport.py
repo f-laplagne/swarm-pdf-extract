@@ -8,6 +8,9 @@ from dashboard.data.routing import geocode_location, get_osrm_route
 from dashboard.components.kpi_card import kpi_row
 
 st.set_page_config(page_title="Transport", page_icon="\U0001F6E3\uFE0F", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\U0001F6E3\uFE0F Visualisation Transport")
 
 engine = st.session_state.get("engine")

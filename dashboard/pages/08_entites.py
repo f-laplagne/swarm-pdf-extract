@@ -23,6 +23,9 @@ from dashboard.data.entity_resolution import (
 from dashboard.data.entity_enrichment import run_auto_resolution
 
 st.set_page_config(page_title="Gestion des entites", page_icon="\U0001f517", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\U0001f517 Gestion des entites")
 
 engine = st.session_state.get("engine")

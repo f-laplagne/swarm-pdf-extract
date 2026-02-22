@@ -9,6 +9,9 @@ from dashboard.data.upload_pipeline import save_upload, check_duplicate, create_
 from sqlalchemy import func
 
 st.set_page_config(page_title="Administration", page_icon="\u2699\uFE0F", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\u2699\uFE0F Administration")
 
 engine = st.session_state.get("engine")

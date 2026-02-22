@@ -16,6 +16,9 @@ from dashboard.components.charts import bar_chart, line_chart
 from dashboard.components.data_table import data_table
 
 st.set_page_config(page_title="Tendances", page_icon="\U0001F4C8", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\U0001F4C8 Tendances Temporelles")
 
 engine = st.session_state.get("engine")

@@ -8,6 +8,9 @@ from dashboard.components.charts import bar_chart, heatmap
 from dashboard.components.data_table import data_table
 
 st.set_page_config(page_title="Logistique", page_icon="\U0001F69B", layout="wide")
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 st.title("\U0001F69B Optimisation Logistique")
 
 engine = st.session_state.get("engine")

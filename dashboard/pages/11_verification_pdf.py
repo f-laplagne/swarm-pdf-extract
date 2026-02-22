@@ -21,6 +21,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+from dashboard.styles.theme import inject_theme
+inject_theme()
+
 
 SAMPLES_DIR     = Path(_PROJECT_ROOT) / "samples"
 EXTRACTIONS_DIR = Path(_PROJECT_ROOT) / "output" / "extractions"
