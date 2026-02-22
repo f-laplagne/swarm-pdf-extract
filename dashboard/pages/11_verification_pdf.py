@@ -29,12 +29,6 @@ st.markdown("""
 .block-container          { padding: 0 !important; }
 [data-testid="stVerticalBlock"] { gap: 0 !important; }
 .element-container        { margin: 0 !important; }
-iframe {
-    height: calc(100vh - 52px) !important;
-    width: 100% !important;
-    border: none !important;
-    display: block !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -602,4 +596,4 @@ window.addEventListener('mouseup', () => {{
 </body>
 </html>"""
 
-st.components.v1.html(html, height=800, scrolling=False)
+st.components.v1.html(html, height=900, scrolling=False)
