@@ -55,7 +55,7 @@ def radar_chart(categories: list[str], values: list[float],
             angularaxis=dict(gridcolor="#1a2035", linecolor="#1a2035"),
         ),
         title=title,
-        **PLOTLY_LAYOUT,
+        **get_plotly_layout(),
     )
     return fig
 

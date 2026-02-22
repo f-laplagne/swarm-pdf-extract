@@ -1,7 +1,7 @@
 """
 Page 11 — Vérification PDF
 Split-view plein écran : PDF original (gauche, PDF.js) ↔ extraction structurée (droite).
-Supporte le thème dark/light via st.session_state._rationalize_theme.
+Sélection de document via un <select> natif dans l'iframe (sans rechargement Streamlit).
 """
 import os, sys, json, threading, socket, functools
 import http.server
@@ -18,19 +18,17 @@ st.set_page_config(
     page_title="Vérification PDF",
     page_icon="🔍",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 from dashboard.styles.theme import inject_theme, _current
 inject_theme()
 
-# ── CSS plein écran (page-specific, vient après inject_theme) ────────────────
+# ── CSS plein écran ──────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* Supprimer tous les espaces pour le mode plein écran */
 .block-container          { padding: 0 !important; }
 [data-testid="stVerticalBlock"] { gap: 0 !important; }
 .element-container        { margin: 0 !important; }
-/* Forcer l'iframe à occuper toute la hauteur de la fenêtre */
 iframe {
     height: 100vh !important;
     width: 100% !important;
@@ -76,7 +74,7 @@ def find_extraction(pdf_path: Path) -> Path | None:
         return p
     return None
 
-# ── Palette thème ─────────────────────────────────────────────────────────────
+# ── Palette thème ──────────────────────────────────────────────────────────
 def _pal() -> dict:
     if _current() == "light":
         return dict(
@@ -93,6 +91,7 @@ def _pal() -> dict:
             notes_bg="#f8fafc",   notes_border="#d0d7e3",
             status_bg="#e8ecf2",  status_border="#d0d7e3",
             hdr_file_bg="#dbe8ff", hdr_file_color="#2563eb", hdr_file_border="#bfdbfe",
+            select_bg="#e8ecf2",
         )
     return dict(
         body_bg="#0d0f14",    hdr_bg="#080b11",    pane_lbl_bg="#080b11",
@@ -108,9 +107,10 @@ def _pal() -> dict:
         notes_bg="#0a0c12",   notes_border="#1a2035",
         status_bg="#080b11",  status_border="#1a2035",
         hdr_file_bg="#0d1828", hdr_file_color="#4a90d9", hdr_file_border="#1a3a5c",
+        select_bg="#080b11",
     )
 
-# ── Confiance ─────────────────────────────────────────────────────────────────
+# ── Confiance ────────────────────────────────────────────────────────────────
 _CONF = {
     "absent":  ("#ff4d4d", "#2a1010"),
     "faible":  ("#ff8c42", "#2a1a0a"),
@@ -152,27 +152,6 @@ def val_cell(val, P: dict) -> str:
         return (f'<span style="font-family:\'JetBrains Mono\',monospace;'
                 f'color:{P["txt_num"]}">{val:,.2f}</span>')
     return str(val)
-
-# ── Sélection document (sidebar — évite le conflit z-index avec l'iframe) ────
-P = _pal()
-
-with st.sidebar:
-    st.markdown(
-        f"<p style='font-family:Manrope,sans-serif;font-size:10px;font-weight:700;"
-        f"letter-spacing:.12em;text-transform:uppercase;color:{P['txt_dim']};"
-        f"margin:0.25rem 0 0.4rem'>📄 Document</p>",
-        unsafe_allow_html=True,
-    )
-    selected_pdf = st.selectbox(
-        "document",
-        PDF_FILES,
-        format_func=lambda p: p.name,
-        label_visibility="collapsed",
-    )
-
-extraction_path = find_extraction(selected_pdf)
-extraction = json.loads(extraction_path.read_text(encoding="utf-8")) if extraction_path else None
-pdf_url    = f"http://localhost:{PDF_SERVER_PORT}/{quote(selected_pdf.name)}"
 
 # ── Panneau extraction ────────────────────────────────────────────────────────
 def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
@@ -255,7 +234,6 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
       </div>
     </div>"""
 
-    # Légende confiance
     legend = (
         f'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;'
         f'margin-bottom:12px;padding:8px 12px;background:{P["card_bg"]};'
@@ -271,7 +249,6 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
                    f'⬤ {label}</span>')
     legend += "</div>"
 
-    # Colonnes du tableau
     col_defs = [
         ("#",             "36px",  "center"),
         ("Matière / Pièce","auto", "left"),
@@ -345,7 +322,6 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
         f'</table></div>'
     )
 
-    # Alertes
     alerts_html = ""
     if warns or champs:
         champ_li = "".join(
@@ -360,12 +336,11 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
             f'<div style="font-family:Manrope,sans-serif;font-size:9px;font-weight:700;'
             f'color:{P["alert_border"]};letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px">'
             f'⚠ Alertes & Champs manquants</div>'
-            f'{"<ul style=\"margin:0;padding-left:14px;margin-bottom:8px\">" + champ_li + "</ul>" if champs else ""}'
-            f'{"<ul style=\"margin:0;padding-left:14px\">" + warn_li + "</ul>" if warns else ""}'
+            f'{"<ul style=\\"margin:0;padding-left:14px;margin-bottom:8px\\">" + champ_li + "</ul>" if champs else ""}'
+            f'{"<ul style=\\"margin:0;padding-left:14px\\">" + warn_li + "</ul>" if warns else ""}'
             f'</div>'
         )
 
-    # Notes
     notes = ext.get("extraction_notes", "")
     notes_html = ""
     if notes:
@@ -383,19 +358,57 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
     return meta_card + legend + table + alerts_html + notes_html
 
 
+# ── Pré-génération de tous les panneaux ──────────────────────────────────────
+P  = _pal()
+cc = _conf_colors()
+
+all_docs: dict = {}
+for pdf_path in PDF_FILES[:30]:   # limite raisonnable
+    ext_path = find_extraction(pdf_path)
+    ext = json.loads(ext_path.read_text(encoding="utf-8")) if ext_path else None
+
+    panel_html = build_extraction_panel(ext, P, cc)
+    nb_l  = len(ext.get("lignes", [])) if ext else 0
+    conf  = ext.get("confiance_globale", 0) if ext else 0
+    tier, pct = conf_tier(conf)
+    fg, _ = cc[tier]
+    nb_c  = len(ext.get("champs_manquants", [])) if ext else 0
+    nb_w  = len(ext.get("warnings", [])) if ext else 0
+
+    all_docs[pdf_path.name] = {
+        "url":       f"http://localhost:{PDF_SERVER_PORT}/{quote(pdf_path.name)}",
+        "panel":     panel_html,
+        "nb_lignes": nb_l,
+        "nb_champs": nb_c,
+        "nb_warns":  nb_w,
+        "conf_pct":  pct,
+        "conf_color": fg,
+        "dot_color": "#52c77f" if ext else "#ff4d4d",
+        "ext_label": "extraction OK" if ext else "extraction introuvable",
+    }
+
+# Sécuriser le JSON pour l'embarquer dans <script> (évite la balise </script>)
+all_docs_json = json.dumps(all_docs).replace("</", "<\\/")
+
+# Valeurs initiales (premier document)
+initial_name = PDF_FILES[0].name if PDF_FILES else ""
+init = all_docs.get(initial_name, {})
+right_html = init.get("panel", "<p>Aucun document trouvé.</p>")
+nb_lignes  = init.get("nb_lignes", 0)
+nb_champs  = init.get("nb_champs", 0)
+nb_warns   = init.get("nb_warns", 0)
+dot_color  = init.get("dot_color", "#ff4d4d")
+ext_label  = init.get("ext_label", "")
+pct_st     = init.get("conf_pct", "0%")
+fg_st      = init.get("conf_color", "#4a5568")
+
+# Options HTML pour le <select>
+options_html = "\n".join(
+    f'<option value="{name}"{" selected" if name == initial_name else ""}>{name}</option>'
+    for name in all_docs.keys()
+) if all_docs else '<option value="">Aucun PDF</option>'
+
 # ── Rendu ─────────────────────────────────────────────────────────────────────
-cc         = _conf_colors()
-right_html = build_extraction_panel(extraction, P, cc)
-nb_lignes  = len(extraction.get("lignes", [])) if extraction else 0
-conf_g     = extraction.get("confiance_globale", 0) if extraction else 0
-tier_st, pct_st = conf_tier(conf_g)
-fg_st, _        = cc[tier_st]
-
-nb_champs  = len(extraction.get("champs_manquants", [])) if extraction else 0
-nb_warns   = len(extraction.get("warnings", []))          if extraction else 0
-dot_color  = "#52c77f" if extraction else "#ff4d4d"
-ext_label  = "extraction OK" if extraction else "extraction introuvable"
-
 html = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -413,10 +426,8 @@ body{{
   display:flex;flex-direction:column;
 }}
 
-/* Split layout */
 .split{{display:flex;flex:1;overflow:hidden;height:calc(100vh - 22px)}}
 
-/* PDF pane */
 .pane-pdf{{
   flex:0 0 50%;border-right:2px solid {P['border']};
   display:flex;flex-direction:column;
@@ -425,11 +436,30 @@ body{{
 .pane-lbl{{
   font-family:'Manrope',sans-serif;font-size:9px;font-weight:700;
   letter-spacing:.15em;text-transform:uppercase;
-  padding:7px 14px;background:{P['pane_lbl_bg']};
-  border-bottom:1px solid {P['border']};color:{P['txt_m']};flex-shrink:0
+  padding:5px 14px;background:{P['pane_lbl_bg']};
+  border-bottom:1px solid {P['border']};color:{P['txt_m']};
+  flex-shrink:0;display:flex;align-items:center;gap:8px;min-height:30px;
+}}
+#doc-selector{{
+  background:{P['select_bg']};
+  border:1px solid {P['border']};
+  color:{P['txt_p']};
+  font-family:'Manrope',sans-serif;
+  font-size:11px;
+  font-weight:500;
+  padding:3px 8px;
+  border-radius:4px;
+  cursor:pointer;
+  outline:none;
+  flex:1;
+  max-width:340px;
+  text-overflow:ellipsis;
+}}
+#doc-selector option{{
+  background:{P['select_bg']};
+  color:{P['txt_p']};
 }}
 
-/* PDF.js */
 #pdf-container{{
   flex:1;overflow-y:auto;overflow-x:auto;padding:12px;
   display:flex;flex-direction:column;align-items:center;gap:8px;
@@ -450,14 +480,12 @@ body{{
   color:#ff4d4d;padding:20px;text-align:center
 }}
 
-/* Resizer */
 .resizer{{
   flex:0 0 4px;background:{P['border']};
   cursor:col-resize;transition:background .15s;z-index:10
 }}
 .resizer:hover,.resizer.active{{background:{P['accent']}}}
 
-/* Extraction pane */
 .pane-ext{{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:360px}}
 .ext-scroll{{
   flex:1;overflow-y:auto;padding:14px 18px 32px;
@@ -467,7 +495,6 @@ body{{
 .ext-scroll::-webkit-scrollbar{{width:5px}}
 .ext-scroll::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
 
-/* Status bar */
 .status{{
   height:22px;background:{P['status_bg']};
   border-top:1px solid {P['status_border']};
@@ -486,7 +513,12 @@ body{{
 
   <!-- PDF -->
   <div class="pane-pdf" id="pane-pdf">
-    <div class="pane-lbl">📄 Document original — {selected_pdf.name}</div>
+    <div class="pane-lbl">
+      📄
+      <select id="doc-selector" onchange="switchDoc(this.value)">
+        {options_html}
+      </select>
+    </div>
     <div id="pdf-container">
       <div id="pdf-loading">⏳ Chargement du PDF…</div>
     </div>
@@ -496,17 +528,17 @@ body{{
 
   <!-- Extraction -->
   <div class="pane-ext" id="pane-ext">
-    <div class="pane-lbl">🧬 Extraction — {nb_lignes} ligne(s)</div>
-    <div class="ext-scroll">{right_html}</div>
+    <div class="pane-lbl" id="ext-pane-lbl">🧬 Extraction — {nb_lignes} ligne(s)</div>
+    <div class="ext-scroll" id="ext-scroll">{right_html}</div>
   </div>
 
 </div>
 
 <div class="status">
-  <div class="si"><div class="dot" style="background:{dot_color}"></div>{ext_label}</div>
-  <div class="si">· confiance : <span style="color:{fg_st};margin-left:3px">{pct_st}</span></div>
-  <div class="si">· {nb_champs} champ(s) manquant(s)</div>
-  <div class="si">· {nb_warns} alerte(s)</div>
+  <div class="si"><div class="dot" id="status-dot" style="background:{dot_color}"></div><span id="status-ext">{ext_label}</span></div>
+  <div class="si">· confiance : <span id="status-conf" style="color:{fg_st};margin-left:3px">{pct_st}</span></div>
+  <div class="si"><span id="status-champs">· {nb_champs} champ(s) manquant(s)</span></div>
+  <div class="si"><span id="status-warns">· {nb_warns} alerte(s)</span></div>
   <div class="si" id="pdf-status">· chargement PDF…</div>
 </div>
 
@@ -514,33 +546,68 @@ body{{
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-const PDF_URL   = "{pdf_url}";
-const container = document.getElementById('pdf-container');
-const statusEl  = document.getElementById('pdf-status');
+const ALL_DOCS = {all_docs_json};
+const statusEl = document.getElementById('pdf-status');
 
-pdfjsLib.getDocument(PDF_URL).promise
-  .then(pdf => {{
-    const total = pdf.numPages;
-    document.getElementById('pdf-loading').remove();
-    statusEl.textContent = '· page 0 / ' + total;
-    const render = n => {{
-      if (n > total) {{ statusEl.textContent = '· ' + total + ' page(s)'; return; }}
-      pdf.getPage(n).then(page => {{
-        const vp = page.getViewport({{scale:1.6}});
-        const c  = document.createElement('canvas');
-        c.height = vp.height; c.width = vp.width;
-        container.appendChild(c);
-        page.render({{canvasContext:c.getContext('2d'),viewport:vp}})
-          .promise.then(() => {{ statusEl.textContent = '· page ' + n + ' / ' + total; render(n+1); }});
-      }});
-    }};
-    render(1);
-  }})
-  .catch(err => {{
-    document.getElementById('pdf-loading').remove();
-    container.innerHTML = '<div id="pdf-error">❌ ' + err.message + '</div>';
-    statusEl.textContent = '· erreur PDF';
-  }});
+function loadPdf(url) {{
+  const container = document.getElementById('pdf-container');
+  container.innerHTML = '<div id="pdf-loading">⏳ Chargement du PDF…</div>';
+  statusEl.textContent = '· chargement PDF…';
+
+  pdfjsLib.getDocument(url).promise
+    .then(pdf => {{
+      const total = pdf.numPages;
+      document.getElementById('pdf-loading').remove();
+      statusEl.textContent = '· page 0 / ' + total;
+      const render = n => {{
+        if (n > total) {{ statusEl.textContent = '· ' + total + ' page(s)'; return; }}
+        pdf.getPage(n).then(page => {{
+          const vp = page.getViewport({{scale:1.6}});
+          const c  = document.createElement('canvas');
+          c.height = vp.height; c.width = vp.width;
+          container.appendChild(c);
+          page.render({{canvasContext:c.getContext('2d'),viewport:vp}})
+            .promise.then(() => {{ statusEl.textContent = '· page ' + n + ' / ' + total; render(n+1); }});
+        }});
+      }};
+      render(1);
+    }})
+    .catch(err => {{
+      const loading = document.getElementById('pdf-loading');
+      if (loading) loading.remove();
+      container.innerHTML = '<div id="pdf-error">❌ ' + err.message + '</div>';
+      statusEl.textContent = '· erreur PDF';
+    }});
+}}
+
+function switchDoc(filename) {{
+  const doc = ALL_DOCS[filename];
+  if (!doc) return;
+
+  // Mise à jour du panneau extraction
+  document.getElementById('ext-scroll').innerHTML = doc.panel;
+  document.getElementById('ext-pane-lbl').textContent =
+    '🧬 Extraction — ' + doc.nb_lignes + ' ligne(s)';
+
+  // Mise à jour de la barre de statut
+  document.getElementById('status-dot').style.background = doc.dot_color;
+  document.getElementById('status-ext').textContent = doc.ext_label;
+  document.getElementById('status-conf').style.color = doc.conf_color;
+  document.getElementById('status-conf').textContent = doc.conf_pct;
+  document.getElementById('status-champs').textContent =
+    '· ' + doc.nb_champs + ' champ(s) manquant(s)';
+  document.getElementById('status-warns').textContent =
+    '· ' + doc.nb_warns + ' alerte(s)';
+
+  // Chargement du nouveau PDF
+  loadPdf(doc.url);
+}}
+
+// Chargement initial
+const initName = {json.dumps(initial_name)};
+if (ALL_DOCS[initName]) {{
+  loadPdf(ALL_DOCS[initName].url);
+}}
 
 // Drag-to-resize
 const resizer = document.getElementById('resizer');

@@ -416,6 +416,18 @@ hr {
 /* === HIDE STREAMLIT CHROME === */
 #MainMenu, footer { visibility: hidden; }
 header[data-testid="stHeader"] { background: transparent !important; }
+
+/* Hide sidebar collapse-button icon text (Material icon name leaks as plain text) */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"] span,
+button[data-testid="baseButton-header"] span {
+    font-size: 0 !important;
+    color: transparent !important;
+}
+/* Keep the button itself visible but hide overflowing icon label */
+[data-testid="stSidebarCollapsedControl"] {
+    overflow: hidden !important;
+}
 """
 
 
