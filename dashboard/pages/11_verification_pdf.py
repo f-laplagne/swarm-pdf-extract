@@ -289,6 +289,48 @@ html,body{{height:100%;overflow:hidden;background:{P['body_bg']};color:{P['txt_p
 .status{{height:22px;background:{P['hdr_bg']};border-top:1px solid {P['border']};display:flex;align-items:center;padding:0 14px;gap:14px;flex-shrink:0}}
 .si{{font-family:'JetBrains Mono',monospace;font-size:9px;color:{P['txt_m']};display:flex;align-items:center;gap:4px}}
 .dot{{width:5px;height:5px;border-radius:50%}}
+/* ── Editable cells ─────────────────────────────────────── */
+.cell-editable {{
+  position: relative;
+  cursor: pointer;
+  border-bottom: 2px dashed #ff8c42 !important;
+}}
+.cell-editable::after {{
+  content: '✏';
+  font-size: 9px;
+  opacity: 0;
+  position: absolute;
+  top: 4px; right: 4px;
+  transition: opacity .15s;
+  pointer-events: none;
+}}
+.cell-editable:hover::after {{ opacity: .6; }}
+.cell-editable.editing {{
+  border-bottom: 2px solid #ff8c42 !important;
+  background: rgba(255,140,66,.07) !important;
+}}
+.cell-editable.saved {{
+  border-bottom: 2px solid #52c77f !important;
+}}
+.cell-editable.error {{
+  border-bottom: 2px solid #ff4d4d !important;
+}}
+.cell-input {{
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #ff8c42;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  outline: none;
+  padding: 0;
+}}
+.save-spinner {{
+  font-size: 10px;
+  color: #ff8c42;
+  margin-left: 4px;
+}}
 </style>
 </head>
 <body>
@@ -426,6 +468,142 @@ window.addEventListener('mousemove', e => {{
 window.addEventListener('mouseup', () => {{
   dragging=false; resizer.classList.remove('active');
   document.body.style.cursor=document.body.style.userSelect='';
+}});
+
+// ── Inline cell editing (conf < 50%) ─────────────────────────────────────────
+const CORRECTION_URL = 'http://localhost:{PDF_SERVER_PORT}/corrections';
+
+function showError(cell, msg) {{
+  cell.classList.remove('editing');
+  cell.classList.add('error');
+  const tt = document.createElement('div');
+  tt.style.cssText = 'position:absolute;bottom:100%;left:0;background:#ff4d4d;color:#fff;'
+    + 'font-family:Manrope,sans-serif;font-size:10px;padding:3px 8px;border-radius:3px;'
+    + 'white-space:nowrap;z-index:100;pointer-events:none';
+  tt.textContent = '⚠ ' + msg;
+  cell.style.position = 'relative';
+  cell.appendChild(tt);
+  setTimeout(() => {{ tt.remove(); cell.classList.remove('error'); }}, 3500);
+}}
+
+function updateConfBadge(ligneId, champ) {{
+  // Replace the confidence badge for this field with a "✓ corrigé" badge
+  document.querySelectorAll('.conf-badge-container').forEach(container => {{
+    if (container.dataset.ligneId == ligneId && container.dataset.champ === champ) {{
+      const badge = container.querySelector('span:last-child');
+      if (badge) {{
+        badge.style.cssText = 'background:#0a2018;color:#52c77f;border:1px solid #52c77f55;'
+          + 'font-family:JetBrains Mono,monospace;font-size:9px;font-weight:600;'
+          + 'padding:1px 7px;border-radius:3px;white-space:nowrap';
+        badge.textContent = '✓ corrigé';
+      }}
+    }}
+  }});
+}}
+
+async function saveCorrection(cell, ligneId, champ, valeurOriginale, confOriginale, newValue) {{
+  const display = cell.querySelector('.cell-display');
+  const input   = cell.querySelector('.cell-input');
+
+  // Show spinner
+  const spinner = document.createElement('span');
+  spinner.className = 'save-spinner';
+  spinner.textContent = '⏳';
+  cell.appendChild(spinner);
+  input.disabled = true;
+
+  try {{
+    const resp = await fetch(CORRECTION_URL, {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{
+        ligne_id: parseInt(ligneId),
+        champ: champ,
+        valeur_originale: valeurOriginale,
+        valeur_corrigee: newValue,
+        confiance_originale: parseFloat(confOriginale) || null,
+      }}),
+    }});
+    const data = await resp.json();
+
+    if (data.success) {{
+      // Update DOM: show new value, remove editable class
+      display.textContent = newValue || '—';
+      display.style.display = '';
+      input.style.display = 'none';
+      cell.classList.remove('editing', 'cell-editable');
+      cell.classList.add('saved');
+      cell.dataset.original = newValue;
+      updateConfBadge(ligneId, champ);
+    }} else {{
+      // Revert
+      input.value = valeurOriginale;
+      input.disabled = false;
+      display.style.display = '';
+      input.style.display = 'none';
+      cell.classList.remove('editing');
+      showError(cell, data.error || 'Erreur inconnue');
+    }}
+  }} catch (err) {{
+    input.value = valeurOriginale;
+    input.disabled = false;
+    display.style.display = '';
+    input.style.display = 'none';
+    cell.classList.remove('editing');
+    showError(cell, 'Réseau : ' + err.message);
+  }} finally {{
+    spinner.remove();
+  }}
+}}
+
+// Event delegation: handle clicks on editable cells
+document.getElementById('ext-scroll').addEventListener('click', function(e) {{
+  const cell = e.target.closest('.cell-editable');
+  if (!cell || cell.classList.contains('saved')) return;
+
+  const display  = cell.querySelector('.cell-display');
+  const input    = cell.querySelector('.cell-input');
+  if (!display || !input) return;
+
+  // Switch to edit mode
+  display.style.display = 'none';
+  input.style.display   = '';
+  input.value = cell.dataset.original || '';
+  cell.classList.add('editing');
+  input.focus();
+  input.select();
+
+  function commitEdit() {{
+    const newVal   = input.value.trim();
+    const origVal  = cell.dataset.original || '';
+    display.style.display = '';
+    input.style.display   = 'none';
+    cell.classList.remove('editing');
+
+    if (newVal === origVal || newVal === '') return; // no change
+
+    saveCorrection(
+      cell,
+      cell.dataset.ligneId,
+      cell.dataset.champ,
+      origVal,
+      cell.dataset.conf,
+      newVal,
+    );
+  }}
+
+  function cancelEdit() {{
+    input.value = cell.dataset.original || '';
+    display.style.display = '';
+    input.style.display   = 'none';
+    cell.classList.remove('editing');
+  }}
+
+  input.addEventListener('blur',    commitEdit,  {{ once: true }});
+  input.addEventListener('keydown', function(ke) {{
+    if (ke.key === 'Enter')  {{ ke.preventDefault(); input.blur(); }}
+    if (ke.key === 'Escape') {{ ke.preventDefault(); input.removeEventListener('blur', commitEdit); cancelEdit(); }}
+  }}, {{ once: true }});
 }});
 </script>
 </body>
