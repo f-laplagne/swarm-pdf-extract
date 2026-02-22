@@ -2,9 +2,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 
-from dashboard.styles.theme import PLOTLY_LAYOUT
+from dashboard.styles.theme import get_plotly_layout
 
-# Discrete color sequence that reads well on dark backgrounds
+# Discrete color sequence readable on both dark and light backgrounds
 _COLORS = [
     "#4a90d9", "#52c77f", "#ff8c42", "#f0c040",
     "#c97dd4", "#38bdf8", "#fb7185", "#a3e635",
@@ -12,7 +12,7 @@ _COLORS = [
 
 
 def _apply_theme(fig: go.Figure) -> go.Figure:
-    fig.update_layout(**PLOTLY_LAYOUT)
+    fig.update_layout(**get_plotly_layout())
     return fig
 
 
