@@ -30,7 +30,7 @@ st.markdown("""
 [data-testid="stVerticalBlock"] { gap: 0 !important; }
 .element-container        { margin: 0 !important; }
 iframe {
-    height: 100vh !important;
+    height: calc(100vh - 52px) !important;
     width: 100% !important;
     border: none !important;
     display: block !important;
@@ -389,12 +389,32 @@ for pdf_path in PDF_FILES[:30]:   # limite raisonnable
         "ext_label": "extraction OK" if ext else "extraction introuvable",
     }
 
-# Sécuriser le JSON pour l'embarquer dans <script> (évite la balise </script>)
-all_docs_json = json.dumps(all_docs).replace("</", "<\\/")
+# Sélecteur de document — dans la couche Streamlit (pas dans l'iframe)
+# Le <select> HTML natif dans un iframe sandboxé Streamlit ne reçoit pas les clics.
+doc_names = list(all_docs.keys())
+st.markdown(f"""
+<style>
+div[data-testid="stSelectbox"] > label {{ display: none !important; }}
+div[data-testid="stSelectbox"] {{
+    background: {P['hdr_bg']};
+    border-bottom: 1px solid {P['border']};
+    padding: 6px 14px 4px;
+    margin: 0 !important;
+}}
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child {{
+    background: {P['select_bg']} !important;
+    border-color: {P['border']} !important;
+    min-height: 32px !important;
+    font-size: 12px !important;
+    font-family: 'Manrope', sans-serif !important;
+    color: {P['txt_p']} !important;
+}}
+</style>
+""", unsafe_allow_html=True)
+initial_name = st.selectbox("Document", options=doc_names, key="verif_doc_sel") or ""
 
-# Valeurs initiales (premier document)
-initial_name = PDF_FILES[0].name if PDF_FILES else ""
-init = all_docs.get(initial_name, {})
+# Valeurs initiales pour le document sélectionné
+init       = all_docs.get(initial_name, {})
 right_html = init.get("panel", "<p>Aucun document trouvé.</p>")
 nb_lignes  = init.get("nb_lignes", 0)
 nb_champs  = init.get("nb_champs", 0)
@@ -403,12 +423,7 @@ dot_color  = init.get("dot_color", "#ff4d4d")
 ext_label  = init.get("ext_label", "")
 pct_st     = init.get("conf_pct", "0%")
 fg_st      = init.get("conf_color", "#4a5568")
-
-# Options HTML pour le <select>
-options_html = "\n".join(
-    f'<option value="{name}"{" selected" if name == initial_name else ""}>{name}</option>'
-    for name in all_docs.keys()
-) if all_docs else '<option value="">Aucun PDF</option>'
+pdf_url    = init.get("url", "")
 
 # ── Rendu ─────────────────────────────────────────────────────────────────────
 html = f"""<!DOCTYPE html>
@@ -441,25 +456,6 @@ body{{
   padding:5px 14px;background:{P['pane_lbl_bg']};
   border-bottom:1px solid {P['border']};color:{P['txt_m']};
   flex-shrink:0;display:flex;align-items:center;gap:8px;min-height:30px;
-}}
-#doc-selector{{
-  background:{P['select_bg']};
-  border:1px solid {P['border']};
-  color:{P['txt_p']};
-  font-family:'Manrope',sans-serif;
-  font-size:11px;
-  font-weight:500;
-  padding:3px 8px;
-  border-radius:4px;
-  cursor:pointer;
-  outline:none;
-  flex:1;
-  max-width:340px;
-  text-overflow:ellipsis;
-}}
-#doc-selector option{{
-  background:{P['select_bg']};
-  color:{P['txt_p']};
 }}
 
 #pdf-container{{
@@ -516,10 +512,8 @@ body{{
   <!-- PDF -->
   <div class="pane-pdf" id="pane-pdf">
     <div class="pane-lbl">
-      📄
-      <select id="doc-selector" onchange="switchDoc(this.value)">
-        {options_html}
-      </select>
+      📄&nbsp;<span style="font-family:'Manrope',sans-serif;font-size:11px;
+        font-weight:500;color:{P['txt_p']};text-transform:none;letter-spacing:0">{initial_name}</span>
     </div>
     <div id="pdf-container">
       <div id="pdf-loading">⏳ Chargement du PDF…</div>
@@ -548,7 +542,6 @@ body{{
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-const ALL_DOCS = {all_docs_json};
 const statusEl = document.getElementById('pdf-status');
 
 function loadPdf(url) {{
@@ -582,34 +575,8 @@ function loadPdf(url) {{
     }});
 }}
 
-function switchDoc(filename) {{
-  const doc = ALL_DOCS[filename];
-  if (!doc) return;
-
-  // Mise à jour du panneau extraction
-  document.getElementById('ext-scroll').innerHTML = doc.panel;
-  document.getElementById('ext-pane-lbl').textContent =
-    '🧬 Extraction — ' + doc.nb_lignes + ' ligne(s)';
-
-  // Mise à jour de la barre de statut
-  document.getElementById('status-dot').style.background = doc.dot_color;
-  document.getElementById('status-ext').textContent = doc.ext_label;
-  document.getElementById('status-conf').style.color = doc.conf_color;
-  document.getElementById('status-conf').textContent = doc.conf_pct;
-  document.getElementById('status-champs').textContent =
-    '· ' + doc.nb_champs + ' champ(s) manquant(s)';
-  document.getElementById('status-warns').textContent =
-    '· ' + doc.nb_warns + ' alerte(s)';
-
-  // Chargement du nouveau PDF
-  loadPdf(doc.url);
-}}
-
-// Chargement initial
-const initName = {json.dumps(initial_name)};
-if (ALL_DOCS[initName]) {{
-  loadPdf(ALL_DOCS[initName].url);
-}}
+// Chargement initial du PDF sélectionné
+loadPdf({json.dumps(pdf_url)});
 
 // Drag-to-resize
 const resizer = document.getElementById('resizer');
