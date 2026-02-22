@@ -58,11 +58,68 @@ SAMPLES_DIR     = Path(_PROJECT_ROOT) / "samples"
 EXTRACTIONS_DIR = Path(_PROJECT_ROOT) / "output" / "extractions"
 PDF_SERVER_PORT = 8504
 
+# ── DB engine (module-level, thread-safe) ────────────────────────────────────
+# Needed by _CORSHandler.do_POST() to persist corrections without Streamlit.
+_DB_ENGINE = None
+
+def _get_or_init_engine():
+    """Return existing engine from session_state, or create a new one."""
+    global _DB_ENGINE
+    if _DB_ENGINE is not None:
+        return _DB_ENGINE
+    # Try to get from Streamlit session_state (set by app.py composition root)
+    engine = st.session_state.get("engine")
+    if engine is None:
+        from dashboard.data.db import get_engine, init_db
+        engine = get_engine()
+        init_db(engine)
+    _DB_ENGINE = engine
+    return _DB_ENGINE
+
+
 class _CORSHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         super().end_headers()
+
     def log_message(self, *_): pass
+
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests from the iframe fetch."""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_POST(self):
+        """Handle POST /corrections from the iframe JS."""
+        import json as _json
+        from dashboard.pages._verification_helpers import handle_correction_post
+
+        if self.path != "/corrections":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw    = self.rfile.read(length)
+            body   = _json.loads(raw)
+        except Exception:
+            status, resp = 400, {"success": False, "error": "JSON invalide"}
+        else:
+            engine = _get_or_init_engine()
+            status, resp = handle_correction_post(body, engine)
+
+        payload = _json.dumps(resp).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(payload)
+
 
 def _port_free(p: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -74,6 +131,9 @@ if _port_free(PDF_SERVER_PORT):
         target=http.server.HTTPServer(("localhost", PDF_SERVER_PORT), _h).serve_forever,
         daemon=True,
     ).start()
+
+# Initialize engine eagerly so do_POST is ready immediately when the server starts
+_get_or_init_engine()
 
 PDF_FILES = sorted(SAMPLES_DIR.glob("*.pdf"))
 
@@ -152,17 +212,25 @@ def _conf_colors():
 P  = _pal()
 cc = _conf_colors()
 
+from dashboard.pages._verification_helpers import get_ligne_ids
+
 all_docs: dict = {}
+_engine_for_render = _get_or_init_engine()
+
 for pdf_path in PDF_FILES:
     ext_path = find_extraction(pdf_path)
-    ext = json.loads(ext_path.read_text(encoding="utf-8")) if ext_path else None
+    ext      = json.loads(ext_path.read_text(encoding="utf-8")) if ext_path else None
+
+    # Enrich with DB ligne IDs so editable cells can be rendered
+    _ligne_ids = get_ligne_ids(_engine_for_render, pdf_path.name) if ext else {}
+
     nb_l  = len(ext.get("lignes", [])) if ext else 0
     conf  = ext.get("confiance_globale", 0) if ext else 0
     tier, pct = conf_tier(conf)
     fg, _ = cc[tier]
     all_docs[pdf_path.name] = {
         "url":        f"http://localhost:{PDF_SERVER_PORT}/{quote(pdf_path.name)}",
-        "panel":      build_extraction_panel(ext, P, cc),
+        "panel":      build_extraction_panel(ext, P, cc, ligne_ids=_ligne_ids),
         "nb_lignes":  nb_l,
         "nb_champs":  len(ext.get("champs_manquants", [])) if ext else 0,
         "nb_warns":   len(ext.get("warnings", [])) if ext else 0,
