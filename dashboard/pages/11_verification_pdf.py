@@ -1,7 +1,10 @@
 """
 Page 11 — Vérification PDF
-Architecture : st.selectbox Streamlit + st.columns + deux iframes indépendants.
-Pas de CSS override sur les iframes (évite la boucle de rerun Streamlit).
+Architecture définitive :
+- CSS pour masquer le header Streamlit (Deploy button)
+- UNE seule st.components.v1.html() avec le split-view complet
+- Sélecteur de document : <select> HTML natif DANS l'iframe (pure JS, 0 rerun)
+- Hauteur dynamique via window.parent.postMessage setFrameHeight (0 rerun, 0 conflit CSS)
 """
 import os, sys, json, threading, socket, functools
 import http.server
@@ -23,10 +26,29 @@ st.set_page_config(
 from dashboard.styles.theme import inject_theme, _current
 inject_theme()
 
+# Stratégie de pleine page :
+#   1. Masquer header/footer Streamlit
+#   2. Cibler les CONTENEURS PARENTS de l'iframe (jamais l'iframe elle-même → boucle rerun)
+#   3. Mettre toute la chaîne de conteneurs à height:100vh + overflow:hidden
+#   4. L'iframe Python est à height=2000 (dépasse toujours le viewport)
+#   5. overflow:hidden sur les parents la clippe à exactement 100vh → pleine page
 st.markdown("""
 <style>
-.block-container { padding: 0.5rem 1rem 0 !important; }
-[data-testid="stVerticalBlock"] { gap: 4px !important; }
+header[data-testid="stHeader"]   { display: none !important; }
+footer[data-testid="stFooter"]   { display: none !important; }
+#MainMenu                         { display: none !important; }
+.stDeployButton                   { display: none !important; }
+
+/* Chaîne de clip : du conteneur principal jusqu'à l'élément précédant l'iframe.
+   NE PAS cibler <iframe> directement → déclencherait un rerun Streamlit infini. */
+[data-testid="stMain"]            { height: 100vh !important; overflow: hidden !important;
+                                    padding: 0 !important; }
+.block-container                  { padding: 0 !important; max-width: 100% !important;
+                                    height: 100vh !important; overflow: hidden !important; }
+[data-testid="stVerticalBlock"]   { gap: 0 !important; height: 100vh !important;
+                                    overflow: hidden !important; }
+.element-container                { margin: 0 !important; height: 100vh !important;
+                                    overflow: hidden !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -55,15 +77,30 @@ if _port_free(PDF_SERVER_PORT):
 PDF_FILES = sorted(SAMPLES_DIR.glob("*.pdf"))
 
 def find_extraction(pdf_path: Path) -> Path | None:
-    stem = pdf_path.stem.replace(" ", "_").replace("+", "").replace("  ", "_")
-    for p in EXTRACTIONS_DIR.glob("*_extraction.json"):
+    # Normalisation : espaces → underscores, suppression +, underscores doubles → simple
+    stem = pdf_path.stem.replace(" ", "_").replace("+", "")
+    while "__" in stem:
+        stem = stem.replace("__", "_")
+    stem = stem.strip("_")
+
+    # Étape 1 : égalité exacte (cas où JSON et PDF ont le même nom court)
+    for p in sorted(EXTRACTIONS_DIR.glob("*_extraction.json")):
         cand = p.stem.replace("_extraction", "")
-        if cand in (stem, pdf_path.stem.replace(" ", "_")):
+        if cand == stem:
             return p
-    first = stem.split("_")[0]
-    for p in EXTRACTIONS_DIR.glob(f"{first}*_extraction.json"):
-        return p
-    return None
+
+    # Étape 2 : le JSON stem est un PRÉFIXE du PDF stem.
+    # Ex. "Facture_24-110192" est préfixe de "Facture_24-110192_complements_general_fr".
+    # On retient le candidat le plus long (plus spécifique).
+    best: Path | None = None
+    best_len = 0
+    for p in sorted(EXTRACTIONS_DIR.glob("*_extraction.json")):
+        cand = p.stem.replace("_extraction", "")
+        if stem == cand or stem.startswith(cand + "_"):
+            if len(cand) > best_len:
+                best = p
+                best_len = len(cand)
+    return best
 
 # ── Palette thème ────────────────────────────────────────────────────────────
 def _pal() -> dict:
@@ -74,10 +111,10 @@ def _pal() -> dict:
             txt_p="#1a2035",     txt_s="#5a6a88",     txt_m="#8a97ab",
             txt_dim="#aab3c5",   txt_num="#1a3060",
             row_even="#f8fafc",  row_odd="#ffffff",
-            pdf_bg="#d8d8d8",
+            pdf_bg="#d8d8d8",    split_bg="#d8dce6",
             alert_bg="#fffbeb",  alert_border="#d97706",
             notes_bg="#f8fafc",  notes_border="#d0d7e3",
-            accent="#2563eb",
+            accent="#2563eb",    select_bg="#e8ecf2",
         )
     return dict(
         body_bg="#0d0f14",   hdr_bg="#080b11",
@@ -85,10 +122,10 @@ def _pal() -> dict:
         txt_p="#c8d0e0",     txt_s="#3a4258",     txt_m="#2d3748",
         txt_dim="#4a5568",   txt_num="#c8d0e0",
         row_even="#0a0c12",  row_odd="#0d0f17",
-        pdf_bg="#1a1a1a",
+        pdf_bg="#1a1a1a",    split_bg="#1a2035",
         alert_bg="#0d0f14",  alert_border="#ff8c42",
         notes_bg="#0a0c12",  notes_border="#1a2035",
-        accent="#4a90d9",
+        accent="#4a90d9",    select_bg="#080b11",
     )
 
 _CONF = {
@@ -133,7 +170,6 @@ def val_cell(val, P: dict) -> str:
                 f'color:{P["txt_num"]}">{val:,.2f}</span>')
     return str(val)
 
-# ── Panneau extraction (HTML pur, rendu dans son propre iframe) ──────────────
 def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
     if not ext:
         return (f"<p style='color:{P['txt_dim']};padding:40px;"
@@ -328,119 +364,205 @@ for pdf_path in PDF_FILES:
         "url":        f"http://localhost:{PDF_SERVER_PORT}/{quote(pdf_path.name)}",
         "panel":      build_extraction_panel(ext, P, cc),
         "nb_lignes":  nb_l,
+        "nb_champs":  len(ext.get("champs_manquants", [])) if ext else 0,
+        "nb_warns":   len(ext.get("warnings", [])) if ext else 0,
         "conf_pct":   pct,
         "conf_color": fg,
+        "dot_color":  "#52c77f" if ext else "#ff4d4d",
+        "ext_label":  "extraction OK" if ext else "extraction introuvable",
     }
 
-# ── Sélecteur de document (Streamlit natif — toujours cliquable) ─────────────
-doc_names = list(all_docs.keys())
-selected  = st.selectbox(
-    "Document",
-    options=doc_names,
-    key="verif_sel",
-    label_visibility="collapsed",
-) or (doc_names[0] if doc_names else "")
+initial_name = list(all_docs.keys())[0] if all_docs else ""
+all_docs_json = json.dumps(all_docs).replace("</", "<\\/")
 
-doc = all_docs.get(selected, {})
+options_html = "\n".join(
+    f'<option value="{n}"{" selected" if n == initial_name else ""}>{n}</option>'
+    for n in all_docs.keys()
+) if all_docs else '<option value="">Aucun PDF</option>'
 
-# ── Layout : deux colonnes côte à côte ───────────────────────────────────────
-col_pdf, col_ext = st.columns(2)
+init       = all_docs.get(initial_name, {})
+nb_lignes  = init.get("nb_lignes", 0)
+nb_champs  = init.get("nb_champs", 0)
+nb_warns   = init.get("nb_warns",  0)
+dot_color  = init.get("dot_color", "#ff4d4d")
+ext_label  = init.get("ext_label", "")
+pct_st     = init.get("conf_pct",  "0%")
+fg_st      = init.get("conf_color","#4a5568")
+right_html = init.get("panel", "<p>Aucun document trouvé.</p>")
 
-# ── Colonne gauche : visionneuse PDF (PDF.js) ────────────────────────────────
-with col_pdf:
-    pdf_url = doc.get("url", "")
-    pdf_html = f"""<!DOCTYPE html>
-<html lang="fr"><head>
+# ── Rendu — UNE seule iframe, hauteur dynamique via postMessage ──────────────
+html = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
 <meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;600&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-html,body{{height:100%;background:{P['pdf_bg']};overflow:hidden;font-family:monospace}}
-#wrap{{height:100%;display:flex;flex-direction:column}}
-#bar{{background:{P['hdr_bg']};border-bottom:1px solid {P['border']};
-  padding:5px 12px;font-size:9px;font-weight:700;letter-spacing:.12em;
-  text-transform:uppercase;color:{P['txt_m']};flex-shrink:0}}
-#pages{{flex:1;overflow-y:auto;overflow-x:auto;padding:10px;
-  display:flex;flex-direction:column;align-items:center;gap:8px;
-  scrollbar-width:thin;scrollbar-color:{P['border']} transparent}}
-#pages::-webkit-scrollbar{{width:4px}}
-#pages::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
-#pages canvas{{box-shadow:0 3px 12px rgba(0,0,0,.4);max-width:100%;display:block}}
-#msg{{font-size:11px;color:{P['txt_m']};padding:40px;text-align:center}}
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;overflow:hidden;background:{P['body_bg']};color:{P['txt_p']};font-family:'Manrope',sans-serif}}
+#root{{display:flex;flex-direction:column;height:100%}}
+.split{{display:flex;flex:1;overflow:hidden}}
+.pane-pdf{{flex:0 0 50%;border-right:2px solid {P['border']};display:flex;flex-direction:column;background:{P['pdf_bg']};min-width:280px}}
+.pane-lbl{{font-family:'Manrope',sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;padding:5px 14px;background:{P['hdr_bg']};border-bottom:1px solid {P['border']};color:{P['txt_m']};flex-shrink:0;display:flex;align-items:center;gap:8px;min-height:30px}}
+#doc-selector{{background:{P['select_bg']};border:1px solid {P['border']};color:{P['txt_p']};font-family:'Manrope',sans-serif;font-size:11px;font-weight:500;padding:3px 8px;border-radius:4px;cursor:pointer;outline:none;flex:1;max-width:340px}}
+#doc-selector option{{background:{P['select_bg']};color:{P['txt_p']}}}
+#pdf-container{{flex:1;overflow-y:auto;overflow-x:auto;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;scrollbar-width:thin;scrollbar-color:{P['border']} transparent}}
+#pdf-container::-webkit-scrollbar{{width:5px}}
+#pdf-container::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
+#pdf-container canvas{{box-shadow:0 4px 20px rgba(0,0,0,.35);border-radius:2px;max-width:100%;display:block}}
+#pdf-loading{{font-family:'JetBrains Mono',monospace;font-size:11px;color:{P['txt_m']};padding:40px;text-align:center}}
+.resizer{{flex:0 0 4px;background:{P['border']};cursor:col-resize;transition:background .15s;z-index:10}}
+.resizer:hover,.resizer.active{{background:{P['accent']}}}
+.pane-ext{{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:360px}}
+.ext-scroll{{flex:1;overflow-y:auto;padding:14px 18px 32px;scrollbar-width:thin;scrollbar-color:{P['border']} transparent;background:{P['body_bg']}}}
+.ext-scroll::-webkit-scrollbar{{width:5px}}
+.ext-scroll::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
+.status{{height:22px;background:{P['hdr_bg']};border-top:1px solid {P['border']};display:flex;align-items:center;padding:0 14px;gap:14px;flex-shrink:0}}
+.si{{font-family:'JetBrains Mono',monospace;font-size:9px;color:{P['txt_m']};display:flex;align-items:center;gap:4px}}
+.dot{{width:5px;height:5px;border-radius:50%}}
 </style>
 </head>
 <body>
-<div id="wrap">
-  <div id="bar" id="pdf-bar">📄 {selected}</div>
-  <div id="pages"><div id="msg">⏳ Chargement…</div></div>
+<div id="root">
+  <div class="split" id="split">
+    <div class="pane-pdf" id="pane-pdf">
+      <div class="pane-lbl">
+        📄
+        <select id="doc-selector" onchange="switchDoc(this.value)">
+          {options_html}
+        </select>
+      </div>
+      <div id="pdf-container">
+        <div id="pdf-loading">⏳ Chargement du PDF…</div>
+      </div>
+    </div>
+    <div class="resizer" id="resizer"></div>
+    <div class="pane-ext" id="pane-ext">
+      <div class="pane-lbl" id="ext-pane-lbl">🧬 Extraction — {nb_lignes} ligne(s)</div>
+      <div class="ext-scroll" id="ext-scroll">{right_html}</div>
+    </div>
+  </div>
+  <div class="status">
+    <div class="si"><div class="dot" style="background:{dot_color}"></div><span id="status-ext">{ext_label}</span></div>
+    <div class="si">· confiance : <span id="status-conf" style="color:{fg_st};margin-left:3px">{pct_st}</span></div>
+    <div class="si"><span id="status-champs">· {nb_champs} champ(s) manquant(s)</span></div>
+    <div class="si"><span id="status-warns">· {nb_warns} alerte(s)</span></div>
+    <div class="si" id="pdf-status">· chargement PDF…</div>
+  </div>
 </div>
+
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const url = {json.dumps(pdf_url)};
-if (url) {{
+
+// ── Hauteur dynamique — API Streamlit Component Protocol ─────────────────
+// Le type DOIT être 'streamlit:setFrameHeight' (préfixe requis depuis Streamlit 1.24).
+// Séquence : componentReady → Streamlit envoie 'render' → on répond setFrameHeight.
+function sendHeight() {{
+  try {{
+    let h;
+    try {{ h = window.parent.innerHeight; }} catch(ex) {{ h = screen.availHeight || 900; }}
+    document.getElementById('root').style.height = h + 'px';
+    window.parent.postMessage({{
+      isStreamlitMessage: true,
+      type: 'streamlit:setFrameHeight',
+      height: h
+    }}, '*');
+  }} catch(e) {{}}
+}}
+
+// 1) Handshake : signal "composant prêt" vers Streamlit
+window.parent.postMessage({{ isStreamlitMessage: true, type: 'streamlit:componentReady', apiVersion: 1 }}, '*');
+
+// 2) Streamlit répond par 'streamlit:render' → on ajuste la hauteur
+window.addEventListener('message', function(e) {{
+  if (e.data && e.data.isStreamlitMessage && e.data.type === 'streamlit:render') sendHeight();
+}});
+
+// 3) Envois proactifs (race-condition guard)
+sendHeight();
+setTimeout(sendHeight, 150);
+setTimeout(sendHeight, 600);
+window.addEventListener('resize', sendHeight);
+
+// ── Données et switchDoc ───────────────────────────────────────────────────
+const ALL_DOCS = {all_docs_json};
+
+function loadPdf(url) {{
+  const container = document.getElementById('pdf-container');
+  container.innerHTML = '<div id="pdf-loading">⏳ Chargement du PDF…</div>';
+  document.getElementById('pdf-status').textContent = '· chargement PDF…';
   pdfjsLib.getDocument(url).promise
     .then(pdf => {{
-      const pages = document.getElementById('pages');
-      pages.innerHTML = '';
-      const n = pdf.numPages;
-      const bar = document.getElementById('bar');
-      bar.textContent = '📄 {selected}  ·  ' + n + ' page(s)';
-      for (let i = 1; i <= n; i++) {{
-        pdf.getPage(i).then(page => {{
-          const vp = page.getViewport({{scale: 1.5}});
+      const total = pdf.numPages;
+      document.getElementById('pdf-loading').remove();
+      document.getElementById('pdf-status').textContent = '· page 0 / ' + total;
+      const render = n => {{
+        if (n > total) {{ document.getElementById('pdf-status').textContent = '· ' + total + ' page(s)'; return; }}
+        pdf.getPage(n).then(page => {{
+          const vp = page.getViewport({{scale:1.6}});
           const c  = document.createElement('canvas');
           c.height = vp.height; c.width = vp.width;
-          pages.appendChild(c);
-          page.render({{canvasContext: c.getContext('2d'), viewport: vp}});
+          container.appendChild(c);
+          page.render({{canvasContext:c.getContext('2d'),viewport:vp}})
+            .promise.then(() => {{
+              document.getElementById('pdf-status').textContent = '· page ' + n + ' / ' + total;
+              render(n + 1);
+            }});
         }});
-      }}
+      }};
+      render(1);
     }})
-    .catch(e => {{
-      document.getElementById('pages').innerHTML =
-        '<div id="msg" style="color:#f66">❌ ' + e.message + '</div>';
+    .catch(err => {{
+      const ld = document.getElementById('pdf-loading');
+      if (ld) ld.remove();
+      container.innerHTML = '<div style="color:#f66;padding:20px;font-family:monospace;font-size:12px">❌ ' + err.message + '</div>';
+      document.getElementById('pdf-status').textContent = '· erreur PDF';
     }});
-}} else {{
-  document.getElementById('msg').textContent = 'Aucun PDF sélectionné';
 }}
-</script>
-</body></html>"""
-    st.components.v1.html(pdf_html, height=760, scrolling=False)
 
-# ── Colonne droite : panneau extraction ──────────────────────────────────────
-with col_ext:
-    panel      = doc.get("panel", "<p>Aucun document.</p>")
-    nb_l       = doc.get("nb_lignes", 0)
-    conf_pct   = doc.get("conf_pct", "—")
-    conf_color = doc.get("conf_color", "#888")
-    ext_html = f"""<!DOCTYPE html>
-<html lang="fr"><head>
-<meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;600&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-html,body{{height:100%;background:{P['body_bg']};overflow:hidden;font-family:Manrope,sans-serif}}
-#wrap{{height:100%;display:flex;flex-direction:column}}
-#bar{{background:{P['hdr_bg']};border-bottom:1px solid {P['border']};
-  padding:5px 14px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}}
-#bar-left{{font-family:Manrope,sans-serif;font-size:9px;font-weight:700;
-  letter-spacing:.15em;text-transform:uppercase;color:{P['txt_m']}}}
-#bar-right{{font-family:'JetBrains Mono',monospace;font-size:12px;
-  font-weight:700;color:{conf_color}}}
-#scroll{{flex:1;overflow-y:auto;padding:14px 18px 32px;
-  scrollbar-width:thin;scrollbar-color:{P['border']} transparent;
-  background:{P['body_bg']}}}
-#scroll::-webkit-scrollbar{{width:5px}}
-#scroll::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
-</style>
-</head>
-<body>
-<div id="wrap">
-  <div id="bar">
-    <span id="bar-left">🧬 Extraction — {nb_l} ligne(s)</span>
-    <span id="bar-right">{conf_pct}</span>
-  </div>
-  <div id="scroll">{panel}</div>
-</div>
-</body></html>"""
-    st.components.v1.html(ext_html, height=760, scrolling=False)
+function switchDoc(filename) {{
+  const doc = ALL_DOCS[filename];
+  if (!doc) return;
+  document.getElementById('ext-scroll').innerHTML = doc.panel;
+  document.getElementById('ext-pane-lbl').textContent = '🧬 Extraction — ' + doc.nb_lignes + ' ligne(s)';
+  document.getElementById('status-ext').textContent = doc.ext_label;
+  document.getElementById('status-conf').style.color = doc.conf_color;
+  document.getElementById('status-conf').textContent = doc.conf_pct;
+  document.getElementById('status-champs').textContent = '· ' + doc.nb_champs + ' champ(s) manquant(s)';
+  document.getElementById('status-warns').textContent = '· ' + doc.nb_warns + ' alerte(s)';
+  loadPdf(doc.url);
+}}
+
+// Chargement initial
+const initName = {json.dumps(initial_name)};
+if (ALL_DOCS[initName]) loadPdf(ALL_DOCS[initName].url);
+
+// Drag-to-resize
+const resizer = document.getElementById('resizer');
+const pdfPane = document.getElementById('pane-pdf');
+const split   = document.getElementById('split');
+let dragging=false, startX=0, startW=0;
+resizer.addEventListener('mousedown', e => {{
+  dragging=true; startX=e.clientX;
+  startW=pdfPane.getBoundingClientRect().width;
+  resizer.classList.add('active');
+  document.body.style.cssText+='cursor:col-resize;user-select:none';
+}});
+window.addEventListener('mousemove', e => {{
+  if (!dragging) return;
+  const total = split.getBoundingClientRect().width;
+  pdfPane.style.flex = '0 0 ' + Math.min(Math.max(startW+(e.clientX-startX),280),total-360) + 'px';
+}});
+window.addEventListener('mouseup', () => {{
+  dragging=false; resizer.classList.remove('active');
+  document.body.style.cursor=document.body.style.userSelect='';
+}});
+</script>
+</body>
+</html>"""
+
+# height=2000 : dépasse tout viewport — les conteneurs parents (100vh+overflow:hidden)
+# clippent l'iframe à la hauteur exacte du viewport, sans toucher l'iframe elle-même.
+st.components.v1.html(html, height=2000, scrolling=False)
