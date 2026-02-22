@@ -18,7 +18,7 @@ st.set_page_config(
     page_title="Vérification PDF",
     page_icon="🔍",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 from dashboard.styles.theme import inject_theme, _current
 inject_theme()
@@ -30,25 +30,9 @@ st.markdown("""
 .block-container          { padding: 0 !important; }
 [data-testid="stVerticalBlock"] { gap: 0 !important; }
 .element-container        { margin: 0 !important; }
-/* Barre d'outils (sélecteur de fichier) */
-[data-testid="stHorizontalBlock"] {
-    background: var(--bg-secondary) !important;
-    padding: 5px 18px !important;
-    border-bottom: 1px solid var(--border) !important;
-    align-items: center !important;
-}
-/* Le sélecteur de document : label masqué, style compact */
-div[data-testid="stSelectbox"] label { display: none; }
-div[data-testid="stSelectbox"] > div > div {
-    background: var(--bg-card) !important;
-    border: 1px solid var(--border) !important;
-    color: var(--text-primary) !important;
-    font-family: var(--font-mono) !important;
-    font-size: 12px !important;
-}
-/* Forcer l'iframe à occuper toute la hauteur restante */
+/* Forcer l'iframe à occuper toute la hauteur de la fenêtre */
 iframe {
-    height: calc(100vh - 52px) !important;
+    height: 100vh !important;
     width: 100% !important;
     border: none !important;
     display: block !important;
@@ -169,19 +153,22 @@ def val_cell(val, P: dict) -> str:
                 f'color:{P["txt_num"]}">{val:,.2f}</span>')
     return str(val)
 
-# ── Sélection document ────────────────────────────────────────────────────────
+# ── Sélection document (sidebar — évite le conflit z-index avec l'iframe) ────
 P = _pal()
 
-col_lbl, col_sel, _spc = st.columns([1, 6, 3])
-with col_lbl:
+with st.sidebar:
     st.markdown(
         f"<p style='font-family:Manrope,sans-serif;font-size:10px;font-weight:700;"
         f"letter-spacing:.12em;text-transform:uppercase;color:{P['txt_dim']};"
-        f"padding-top:10px;margin:0'>Document</p>",
+        f"margin:0.25rem 0 0.4rem'>📄 Document</p>",
         unsafe_allow_html=True,
     )
-with col_sel:
-    selected_pdf = st.selectbox("", PDF_FILES, format_func=lambda p: p.name)
+    selected_pdf = st.selectbox(
+        "document",
+        PDF_FILES,
+        format_func=lambda p: p.name,
+        label_visibility="collapsed",
+    )
 
 extraction_path = find_extraction(selected_pdf)
 extraction = json.loads(extraction_path.read_text(encoding="utf-8")) if extraction_path else None
