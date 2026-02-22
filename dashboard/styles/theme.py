@@ -171,6 +171,14 @@ p, li, span, label, .stMarkdown {
     line-height: 1.6;
 }
 
+/* Masquer les spans internes Streamlit dans les headers d'expanders */
+details summary span[class^="_"],
+details summary span[class*=" _"] {
+    font-size: 0 !important;
+    color: transparent !important;
+    user-select: none !important;
+}
+
 /* === KPI METRICS === */
 [data-testid="metric-container"] {
     background: var(--bg-card) !important;

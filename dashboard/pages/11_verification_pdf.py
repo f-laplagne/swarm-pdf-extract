@@ -330,14 +330,16 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
         warn_li = "".join(
             f'<li style="font-family:Manrope,sans-serif;font-size:11px;color:#ff8c42;'
             f'margin-bottom:5px;line-height:1.5">{w}</li>' for w in warns)
+        ul_champs = f'<ul style="margin:0;padding-left:14px;margin-bottom:8px">{champ_li}</ul>' if champs else ""
+        ul_warns  = f'<ul style="margin:0;padding-left:14px">{warn_li}</ul>' if warns else ""
         alerts_html = (
             f'<div style="border:1px solid {P["alert_border"]};border-left:3px solid {P["alert_border"]};'
             f'border-radius:4px;padding:12px 16px;margin-bottom:12px;background:{P["alert_bg"]}">'
             f'<div style="font-family:Manrope,sans-serif;font-size:9px;font-weight:700;'
             f'color:{P["alert_border"]};letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px">'
             f'⚠ Alertes & Champs manquants</div>'
-            f'{"<ul style=\\"margin:0;padding-left:14px;margin-bottom:8px\\">" + champ_li + "</ul>" if champs else ""}'
-            f'{"<ul style=\\"margin:0;padding-left:14px\\">" + warn_li + "</ul>" if warns else ""}'
+            f'{ul_champs}'
+            f'{ul_warns}'
             f'</div>'
         )
 
