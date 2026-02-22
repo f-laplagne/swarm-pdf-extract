@@ -1,7 +1,7 @@
 """
 Page 11 — Vérification PDF
-Split-view plein écran : PDF original (gauche, PDF.js) ↔ extraction structurée (droite).
-Sélection de document via un <select> natif dans l'iframe (sans rechargement Streamlit).
+Architecture : st.selectbox Streamlit + st.columns + deux iframes indépendants.
+Pas de CSS override sur les iframes (évite la boucle de rerun Streamlit).
 """
 import os, sys, json, threading, socket, functools
 import http.server
@@ -23,12 +23,10 @@ st.set_page_config(
 from dashboard.styles.theme import inject_theme, _current
 inject_theme()
 
-# ── CSS plein écran ──────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-.block-container          { padding: 0 !important; }
-[data-testid="stVerticalBlock"] { gap: 0 !important; }
-.element-container        { margin: 0 !important; }
+.block-container { padding: 0.5rem 1rem 0 !important; }
+[data-testid="stVerticalBlock"] { gap: 4px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -54,7 +52,6 @@ if _port_free(PDF_SERVER_PORT):
         daemon=True,
     ).start()
 
-# ── Données ──────────────────────────────────────────────────────────────────
 PDF_FILES = sorted(SAMPLES_DIR.glob("*.pdf"))
 
 def find_extraction(pdf_path: Path) -> Path | None:
@@ -68,43 +65,32 @@ def find_extraction(pdf_path: Path) -> Path | None:
         return p
     return None
 
-# ── Palette thème ──────────────────────────────────────────────────────────
+# ── Palette thème ────────────────────────────────────────────────────────────
 def _pal() -> dict:
     if _current() == "light":
         return dict(
-            body_bg="#f2f4f8",    hdr_bg="#e8ecf2",   pane_lbl_bg="#eaeef5",
-            border="#d0d7e3",     border_light="#e0e5ef",
-            split_bg="#d8dce6",
-            txt_p="#1a2035",      txt_s="#5a6a88",     txt_m="#8a97ab",
-            txt_dim="#aab3c5",    txt_num="#1a3060",
-            card_bg="#ffffff",    card_bg2="#f4f6fb",
-            row_even="#f8fafc",   row_odd="#ffffff",
+            body_bg="#f2f4f8",   hdr_bg="#e8ecf2",
+            card_bg="#ffffff",   border="#d0d7e3",    border_light="#e0e5ef",
+            txt_p="#1a2035",     txt_s="#5a6a88",     txt_m="#8a97ab",
+            txt_dim="#aab3c5",   txt_num="#1a3060",
+            row_even="#f8fafc",  row_odd="#ffffff",
             pdf_bg="#d8d8d8",
-            accent="#2563eb",     accent_bg="#eff4ff",  accent_border="#bfdbfe",
-            alert_bg="#fffbeb",   alert_border="#d97706",
-            notes_bg="#f8fafc",   notes_border="#d0d7e3",
-            status_bg="#e8ecf2",  status_border="#d0d7e3",
-            hdr_file_bg="#dbe8ff", hdr_file_color="#2563eb", hdr_file_border="#bfdbfe",
-            select_bg="#e8ecf2",
+            alert_bg="#fffbeb",  alert_border="#d97706",
+            notes_bg="#f8fafc",  notes_border="#d0d7e3",
+            accent="#2563eb",
         )
     return dict(
-        body_bg="#0d0f14",    hdr_bg="#080b11",    pane_lbl_bg="#080b11",
-        border="#1a2035",     border_light="#131825",
-        split_bg="#1a2035",
-        txt_p="#c8d0e0",      txt_s="#3a4258",     txt_m="#2d3748",
-        txt_dim="#4a5568",    txt_num="#c8d0e0",
-        card_bg="#0a0d14",    card_bg2="#0a0c12",
-        row_even="#0a0c12",   row_odd="#0d0f17",
+        body_bg="#0d0f14",   hdr_bg="#080b11",
+        card_bg="#0a0d14",   border="#1a2035",    border_light="#131825",
+        txt_p="#c8d0e0",     txt_s="#3a4258",     txt_m="#2d3748",
+        txt_dim="#4a5568",   txt_num="#c8d0e0",
+        row_even="#0a0c12",  row_odd="#0d0f17",
         pdf_bg="#1a1a1a",
-        accent="#4a90d9",     accent_bg="#0d1828",  accent_border="#1a3a5c",
-        alert_bg="#0d0f14",   alert_border="#ff8c42",
-        notes_bg="#0a0c12",   notes_border="#1a2035",
-        status_bg="#080b11",  status_border="#1a2035",
-        hdr_file_bg="#0d1828", hdr_file_color="#4a90d9", hdr_file_border="#1a3a5c",
-        select_bg="#080b11",
+        alert_bg="#0d0f14",  alert_border="#ff8c42",
+        notes_bg="#0a0c12",  notes_border="#1a2035",
+        accent="#4a90d9",
     )
 
-# ── Confiance ────────────────────────────────────────────────────────────────
 _CONF = {
     "absent":  ("#ff4d4d", "#2a1010"),
     "faible":  ("#ff8c42", "#2a1a0a"),
@@ -135,7 +121,7 @@ def conf_badge(score, cc: dict) -> str:
     fg, bg = cc[tier]
     return (
         f'<span style="background:{bg};color:{fg};border:1px solid {fg}55;'
-        f'font-family:\'JetBrains Mono\',monospace;font-size:9px;font-weight:600;'
+        f'font-family:JetBrains Mono,monospace;font-size:9px;font-weight:600;'
         f'padding:1px 7px;border-radius:3px;white-space:nowrap">⬤ {pct}</span>'
     )
 
@@ -143,11 +129,11 @@ def val_cell(val, P: dict) -> str:
     if val is None:
         return f'<span style="color:{P["txt_dim"]};font-style:italic">—</span>'
     if isinstance(val, float):
-        return (f'<span style="font-family:\'JetBrains Mono\',monospace;'
+        return (f'<span style="font-family:JetBrains Mono,monospace;'
                 f'color:{P["txt_num"]}">{val:,.2f}</span>')
     return str(val)
 
-# ── Panneau extraction ────────────────────────────────────────────────────────
+# ── Panneau extraction (HTML pur, rendu dans son propre iframe) ──────────────
 def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
     if not ext:
         return (f"<p style='color:{P['txt_dim']};padding:40px;"
@@ -171,10 +157,6 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
         "ocr_tesseract":           "OCR Tesseract",
         "auto_fallback_paddleocr": "OCR PaddleOCR",
     }
-    type_labels = {
-        "facture":          "Facture",
-        "facture_attentes": "Facture Attentes",
-    }
 
     def mrow(label, value):
         if not value: return ""
@@ -189,83 +171,60 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
         )
 
     meta_card = f"""
-    <div style="background:{P['card_bg']};border:1px solid {P['border']};border-radius:6px;
-                padding:16px 20px;margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
-        <div>
-          <div style="font-family:'DM Serif Display',serif;font-size:22px;
-                      color:{P['txt_p']};letter-spacing:.01em">
-            {meta.get('numero_document','—')}
-          </div>
-          <div style="font-family:Manrope,sans-serif;font-size:10px;color:{P['txt_s']};
-                      letter-spacing:.1em;text-transform:uppercase;margin-top:2px">
-            {type_labels.get(ext.get('type_document',''), ext.get('type_document',''))}
-            &nbsp;·&nbsp; {meta.get('date_document','—')}
-            &nbsp;·&nbsp; {strat_labels.get(ext.get('strategie_utilisee',''), ext.get('strategie_utilisee',''))}
-          </div>
-        </div>
-        <div style="background:{bg_g};border:1px solid {fg_g}55;border-radius:5px;
-                    padding:8px 14px;text-align:center;flex-shrink:0;margin-left:16px">
-          <div style="font-family:'JetBrains Mono',monospace;font-size:22px;
-                      font-weight:700;color:{fg_g};line-height:1">{pct_g}</div>
-          <div style="font-family:Manrope,sans-serif;font-size:8px;color:{fg_g};
-                      letter-spacing:.1em;text-transform:uppercase;margin-top:3px;opacity:.7">confiance</div>
-        </div>
+<div style="background:{P['card_bg']};border:1px solid {P['border']};border-radius:6px;
+            padding:16px 20px;margin-bottom:14px">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+    <div>
+      <div style="font-family:'DM Serif Display',serif;font-size:22px;
+                  color:{P['txt_p']};letter-spacing:.01em">
+        {meta.get('numero_document','—')}
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 32px">
-        <table style="border-collapse:collapse">
-          {mrow("Fournisseur", fourn.get("nom"))}
-          {mrow("TVA fourn.", fourn.get("tva_intra"))}
-          {mrow("Client", client.get("nom"))}
-          {mrow("Commande", refs.get("commande"))}
-        </table>
-        <table style="border-collapse:collapse">
-          {mrow("HT",  f"{meta.get('montant_ht'):,.2f} {meta.get('devise','EUR')}" if meta.get('montant_ht') else None)}
-          {mrow("TTC", f"{meta.get('montant_ttc'):,.2f} {meta.get('devise','EUR')}" if meta.get('montant_ttc') else None)}
-          {mrow("Paiement", meta.get("conditions_paiement"))}
-          {mrow("Champs ∅", ", ".join(champs) if champs else None)}
-        </table>
+      <div style="font-family:Manrope,sans-serif;font-size:10px;color:{P['txt_s']};
+                  letter-spacing:.1em;text-transform:uppercase;margin-top:2px">
+        {meta.get('date_document','—')}
+        &nbsp;·&nbsp; {strat_labels.get(ext.get('strategie_utilisee',''), ext.get('strategie_utilisee',''))}
       </div>
-    </div>"""
-
-    legend = (
-        f'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;'
-        f'margin-bottom:12px;padding:8px 12px;background:{P["card_bg"]};'
-        f'border:1px solid {P["border"]};border-radius:4px">'
-        f'<span style="font-family:Manrope,sans-serif;font-size:9px;font-weight:700;'
-        f'color:{P["txt_m"]};letter-spacing:.1em;text-transform:uppercase;'
-        f'margin-right:4px">Confiance :</span>'
-    )
-    for label, tier in [("0%","absent"),("<50%","faible"),("50-70%","moyen"),("70-90%","bon"),(">90%","parfait")]:
-        fg, bg = cc[tier]
-        legend += (f'<span style="background:{bg};color:{fg};border:1px solid {fg}44;'
-                   f'font-family:Manrope,sans-serif;font-size:9px;padding:2px 8px;border-radius:3px">'
-                   f'⬤ {label}</span>')
-    legend += "</div>"
+    </div>
+    <div style="background:{bg_g};border:1px solid {fg_g}55;border-radius:5px;
+                padding:8px 14px;text-align:center;flex-shrink:0;margin-left:16px">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:22px;
+                  font-weight:700;color:{fg_g};line-height:1">{pct_g}</div>
+      <div style="font-family:Manrope,sans-serif;font-size:8px;color:{fg_g};
+                  letter-spacing:.1em;text-transform:uppercase;margin-top:3px;opacity:.7">confiance</div>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 32px">
+    <table style="border-collapse:collapse">
+      {mrow("Fournisseur", fourn.get("nom"))}
+      {mrow("TVA fourn.", fourn.get("tva_intra"))}
+      {mrow("Client", client.get("nom"))}
+      {mrow("Commande", refs.get("commande"))}
+    </table>
+    <table style="border-collapse:collapse">
+      {mrow("HT",  f"{meta.get('montant_ht'):,.2f} {meta.get('devise','EUR')}" if meta.get('montant_ht') else None)}
+      {mrow("TTC", f"{meta.get('montant_ttc'):,.2f} {meta.get('devise','EUR')}" if meta.get('montant_ttc') else None)}
+      {mrow("Paiement", meta.get("conditions_paiement"))}
+      {mrow("Champs ∅", ", ".join(champs) if champs else None)}
+    </table>
+  </div>
+</div>"""
 
     col_defs = [
-        ("#",             "36px",  "center"),
-        ("Matière / Pièce","auto", "left"),
-        ("Unité",         "52px",  "center"),
-        ("Quantité",      "76px",  "right"),
-        ("Prix unit.",    "80px",  "right"),
-        ("Total €",       "80px",  "right"),
-        ("Date dép.",     "88px",  "center"),
-        ("Date arr.",     "88px",  "center"),
-        ("Départ",        "110px", "left"),
-        ("Arrivée",       "110px", "left"),
+        ("#","36px","center"), ("Matière / Pièce","auto","left"),
+        ("Unité","52px","center"), ("Quantité","76px","right"),
+        ("Prix unit.","80px","right"), ("Total €","80px","right"),
+        ("Date dép.","88px","center"), ("Date arr.","88px","center"),
+        ("Départ","110px","left"), ("Arrivée","110px","left"),
     ]
     conf_fields = [
-        ("type_matiere","Matière"),("unite","Unité"),
-        ("quantite","Qté"),("prix_unitaire","PU"),
-        ("prix_total","Total"),("date_depart","D.dép"),
-        ("date_arrivee","D.arr"),("lieu_depart","Départ"),
-        ("lieu_arrivee","Arrivée"),
+        ("type_matiere","Matière"),("unite","Unité"),("quantite","Qté"),
+        ("prix_unitaire","PU"),("prix_total","Total"),("date_depart","D.dép"),
+        ("date_arrivee","D.arr"),("lieu_depart","Départ"),("lieu_arrivee","Arrivée"),
     ]
 
-    th = (f"font-family:Manrope,sans-serif;font-size:9px;font-weight:700;letter-spacing:.1em;"
-          f"text-transform:uppercase;color:{P['txt_m']};padding:8px 10px;"
-          f"border-bottom:2px solid {P['border']};white-space:nowrap;")
+    th = (f"font-family:Manrope,sans-serif;font-size:9px;font-weight:700;"
+          f"letter-spacing:.1em;text-transform:uppercase;color:{P['txt_m']};"
+          f"padding:8px 10px;border-bottom:2px solid {P['border']};white-space:nowrap;")
     headers = "".join(
         f'<th style="{th}text-align:{a};width:{w}">{n}</th>'
         for n, w, a in col_defs
@@ -276,40 +235,41 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
         conf  = ligne.get("confiance", {})
         bg_r  = P["row_even"] if i % 2 == 0 else P["row_odd"]
         pu, qt, pt = ligne.get("prix_unitaire"), ligne.get("quantite"), ligne.get("prix_total")
-        total_c = "#ff6b6b" if (pu and qt and pt and abs(round(pu * qt, 2) - pt) > 0.02) else P["txt_p"]
+        total_c = "#ff6b6b" if (pu and qt and pt and abs(round(pu*qt,2)-pt) > 0.02) else P["txt_p"]
         td = (f'style="padding:7px 10px;border-bottom:1px solid {P["border_light"]};'
               f'vertical-align:middle;background:{bg_r};')
         rows += f"""
-        <tr>
-          <td {td}text-align:center;color:{P['txt_dim']};font-family:'JetBrains Mono',monospace;font-size:11px">{ligne.get('ligne_numero','')}</td>
-          <td {td}color:{P['txt_p']};font-family:Manrope,sans-serif;font-size:12px">{val_cell(ligne.get('type_matiere'),P)}</td>
-          <td {td}text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:{P['txt_s']}">{val_cell(ligne.get('unite'),P)}</td>
-          <td {td}text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:{P['txt_p']}">{val_cell(ligne.get('quantite'),P)}</td>
-          <td {td}text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:{P['txt_p']}">{val_cell(ligne.get('prix_unitaire'),P)}</td>
-          <td {td}text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:{total_c}">{val_cell(ligne.get('prix_total'),P)}</td>
-          <td {td}text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:{P['txt_dim']}">{val_cell(ligne.get('date_depart'),P)}</td>
-          <td {td}text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:{P['txt_dim']}">{val_cell(ligne.get('date_arrivee'),P)}</td>
-          <td {td}color:{P['txt_s']};font-family:Manrope,sans-serif;font-size:11px">{val_cell(ligne.get('lieu_depart'),P)}</td>
-          <td {td}color:{P['txt_s']};font-family:Manrope,sans-serif;font-size:11px">{val_cell(ligne.get('lieu_arrivee'),P)}</td>
-        </tr>
-        <tr>
-          <td colspan="10" style="padding:3px 10px 9px;background:{bg_r};border-bottom:1px solid {P['border_light']}">
-            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
-              <span style="font-family:Manrope,sans-serif;font-size:9px;color:{P['txt_m']};
-                           font-weight:600;letter-spacing:.07em;text-transform:uppercase;
-                           margin-right:3px">conf.</span>
-              {"".join(
-                  f'<span style="display:inline-flex;align-items:center;gap:3px">'
-                  f'<span style="font-family:Manrope,sans-serif;font-size:9px;color:{P["txt_m"]}">{label}</span>'
-                  f'{conf_badge(conf.get(key), cc)}</span>'
-                  for key, label in conf_fields
-              )}
-            </div>
-          </td>
-        </tr>"""
+<tr>
+  <td {td}text-align:center;color:{P['txt_dim']};font-family:'JetBrains Mono',monospace;font-size:11px">{ligne.get('ligne_numero','')}</td>
+  <td {td}color:{P['txt_p']};font-family:Manrope,sans-serif;font-size:12px">{val_cell(ligne.get('type_matiere'),P)}</td>
+  <td {td}text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:{P['txt_s']}">{val_cell(ligne.get('unite'),P)}</td>
+  <td {td}text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:{P['txt_p']}">{val_cell(ligne.get('quantite'),P)}</td>
+  <td {td}text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:{P['txt_p']}">{val_cell(ligne.get('prix_unitaire'),P)}</td>
+  <td {td}text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:{total_c}">{val_cell(ligne.get('prix_total'),P)}</td>
+  <td {td}text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:{P['txt_dim']}">{val_cell(ligne.get('date_depart'),P)}</td>
+  <td {td}text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:{P['txt_dim']}">{val_cell(ligne.get('date_arrivee'),P)}</td>
+  <td {td}color:{P['txt_s']};font-family:Manrope,sans-serif;font-size:11px">{val_cell(ligne.get('lieu_depart'),P)}</td>
+  <td {td}color:{P['txt_s']};font-family:Manrope,sans-serif;font-size:11px">{val_cell(ligne.get('lieu_arrivee'),P)}</td>
+</tr>
+<tr>
+  <td colspan="10" style="padding:3px 10px 9px;background:{bg_r};border-bottom:1px solid {P['border_light']}">
+    <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
+      <span style="font-family:Manrope,sans-serif;font-size:9px;color:{P['txt_m']};
+                   font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+                   margin-right:3px">conf.</span>
+      {"".join(
+          f'<span style="display:inline-flex;align-items:center;gap:3px">'
+          f'<span style="font-family:Manrope,sans-serif;font-size:9px;color:{P["txt_m"]}">{label}</span>'
+          f'{conf_badge(conf.get(key), cc)}</span>'
+          for key, label in conf_fields
+      )}
+    </div>
+  </td>
+</tr>"""
 
     table = (
-        f'<div style="overflow-x:auto;border:1px solid {P["border"]};border-radius:6px;margin-bottom:14px">'
+        f'<div style="overflow-x:auto;border:1px solid {P["border"]};'
+        f'border-radius:6px;margin-bottom:14px">'
         f'<table style="border-collapse:collapse;width:100%;min-width:880px">'
         f'<thead><tr style="background:{P["hdr_bg"]}">{headers}</tr></thead>'
         f'<tbody>{rows}</tbody>'
@@ -319,7 +279,7 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
     alerts_html = ""
     if warns or champs:
         champ_li = "".join(
-            f'<li style="font-family:\'JetBrains Mono\',monospace;font-size:10px;'
+            f'<li style="font-family:JetBrains Mono,monospace;font-size:10px;'
             f'color:#ff4d4d;margin-bottom:3px">{c}</li>' for c in champs)
         warn_li = "".join(
             f'<li style="font-family:Manrope,sans-serif;font-size:11px;color:#ff8c42;'
@@ -332,9 +292,7 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
             f'<div style="font-family:Manrope,sans-serif;font-size:9px;font-weight:700;'
             f'color:{P["alert_border"]};letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px">'
             f'⚠ Alertes & Champs manquants</div>'
-            f'{ul_champs}'
-            f'{ul_warns}'
-            f'</div>'
+            f'{ul_champs}{ul_warns}</div>'
         )
 
     notes = ext.get("extraction_notes", "")
@@ -351,249 +309,138 @@ def build_extraction_panel(ext: dict | None, P: dict, cc: dict) -> str:
             f'</div>'
         )
 
-    return meta_card + legend + table + alerts_html + notes_html
+    return meta_card + table + alerts_html + notes_html
 
 
-# ── Pré-génération de tous les panneaux ──────────────────────────────────────
+# ── Construction de tous les panneaux ────────────────────────────────────────
 P  = _pal()
 cc = _conf_colors()
 
 all_docs: dict = {}
-for pdf_path in PDF_FILES[:30]:   # limite raisonnable
+for pdf_path in PDF_FILES:
     ext_path = find_extraction(pdf_path)
     ext = json.loads(ext_path.read_text(encoding="utf-8")) if ext_path else None
-
-    panel_html = build_extraction_panel(ext, P, cc)
     nb_l  = len(ext.get("lignes", [])) if ext else 0
     conf  = ext.get("confiance_globale", 0) if ext else 0
     tier, pct = conf_tier(conf)
     fg, _ = cc[tier]
-    nb_c  = len(ext.get("champs_manquants", [])) if ext else 0
-    nb_w  = len(ext.get("warnings", [])) if ext else 0
-
     all_docs[pdf_path.name] = {
-        "url":       f"http://localhost:{PDF_SERVER_PORT}/{quote(pdf_path.name)}",
-        "panel":     panel_html,
-        "nb_lignes": nb_l,
-        "nb_champs": nb_c,
-        "nb_warns":  nb_w,
-        "conf_pct":  pct,
+        "url":        f"http://localhost:{PDF_SERVER_PORT}/{quote(pdf_path.name)}",
+        "panel":      build_extraction_panel(ext, P, cc),
+        "nb_lignes":  nb_l,
+        "conf_pct":   pct,
         "conf_color": fg,
-        "dot_color": "#52c77f" if ext else "#ff4d4d",
-        "ext_label": "extraction OK" if ext else "extraction introuvable",
     }
 
-# Sélecteur de document — dans la couche Streamlit (pas dans l'iframe)
-# Le <select> HTML natif dans un iframe sandboxé Streamlit ne reçoit pas les clics.
+# ── Sélecteur de document (Streamlit natif — toujours cliquable) ─────────────
 doc_names = list(all_docs.keys())
-st.markdown(f"""
-<style>
-div[data-testid="stSelectbox"] > label {{ display: none !important; }}
-div[data-testid="stSelectbox"] {{
-    background: {P['hdr_bg']};
-    border-bottom: 1px solid {P['border']};
-    padding: 6px 14px 4px;
-    margin: 0 !important;
-}}
-div[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child {{
-    background: {P['select_bg']} !important;
-    border-color: {P['border']} !important;
-    min-height: 32px !important;
-    font-size: 12px !important;
-    font-family: 'Manrope', sans-serif !important;
-    color: {P['txt_p']} !important;
-}}
-</style>
-""", unsafe_allow_html=True)
-initial_name = st.selectbox("Document", options=doc_names, key="verif_doc_sel") or ""
+selected  = st.selectbox(
+    "Document",
+    options=doc_names,
+    key="verif_sel",
+    label_visibility="collapsed",
+) or (doc_names[0] if doc_names else "")
 
-# Valeurs initiales pour le document sélectionné
-init       = all_docs.get(initial_name, {})
-right_html = init.get("panel", "<p>Aucun document trouvé.</p>")
-nb_lignes  = init.get("nb_lignes", 0)
-nb_champs  = init.get("nb_champs", 0)
-nb_warns   = init.get("nb_warns", 0)
-dot_color  = init.get("dot_color", "#ff4d4d")
-ext_label  = init.get("ext_label", "")
-pct_st     = init.get("conf_pct", "0%")
-fg_st      = init.get("conf_color", "#4a5568")
-pdf_url    = init.get("url", "")
+doc = all_docs.get(selected, {})
 
-# ── Rendu ─────────────────────────────────────────────────────────────────────
-html = f"""<!DOCTYPE html>
-<html lang="fr">
-<head>
+# ── Layout : deux colonnes côte à côte ───────────────────────────────────────
+col_pdf, col_ext = st.columns(2)
+
+# ── Colonne gauche : visionneuse PDF (PDF.js) ────────────────────────────────
+with col_pdf:
+    pdf_url = doc.get("url", "")
+    pdf_html = f"""<!DOCTYPE html>
+<html lang="fr"><head>
 <meta charset="UTF-8">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;600&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
-*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
-html,body{{height:100%;overflow:hidden}}
-body{{
-  background:{P['body_bg']};
-  color:{P['txt_p']};
-  font-family:'Manrope',sans-serif;
-  display:flex;flex-direction:column;
-}}
-
-.split{{display:flex;flex:1;overflow:hidden;height:calc(100vh - 22px)}}
-
-.pane-pdf{{
-  flex:0 0 50%;border-right:2px solid {P['border']};
-  display:flex;flex-direction:column;
-  background:{P['pdf_bg']};min-width:280px
-}}
-.pane-lbl{{
-  font-family:'Manrope',sans-serif;font-size:9px;font-weight:700;
-  letter-spacing:.15em;text-transform:uppercase;
-  padding:5px 14px;background:{P['pane_lbl_bg']};
-  border-bottom:1px solid {P['border']};color:{P['txt_m']};
-  flex-shrink:0;display:flex;align-items:center;gap:8px;min-height:30px;
-}}
-
-#pdf-container{{
-  flex:1;overflow-y:auto;overflow-x:auto;padding:12px;
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;background:{P['pdf_bg']};overflow:hidden;font-family:monospace}}
+#wrap{{height:100%;display:flex;flex-direction:column}}
+#bar{{background:{P['hdr_bg']};border-bottom:1px solid {P['border']};
+  padding:5px 12px;font-size:9px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;color:{P['txt_m']};flex-shrink:0}}
+#pages{{flex:1;overflow-y:auto;overflow-x:auto;padding:10px;
   display:flex;flex-direction:column;align-items:center;gap:8px;
-  scrollbar-width:thin;scrollbar-color:{P['border']} transparent
-}}
-#pdf-container::-webkit-scrollbar{{width:5px}}
-#pdf-container::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
-#pdf-container canvas{{
-  box-shadow:0 4px 20px rgba(0,0,0,.35);border-radius:2px;
-  max-width:100%;display:block
-}}
-#pdf-loading{{
-  font-family:'JetBrains Mono',monospace;font-size:11px;
-  color:{P['txt_m']};padding:40px;text-align:center
-}}
-#pdf-error{{
-  font-family:'Manrope',sans-serif;font-size:12px;
-  color:#ff4d4d;padding:20px;text-align:center
-}}
-
-.resizer{{
-  flex:0 0 4px;background:{P['border']};
-  cursor:col-resize;transition:background .15s;z-index:10
-}}
-.resizer:hover,.resizer.active{{background:{P['accent']}}}
-
-.pane-ext{{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:360px}}
-.ext-scroll{{
-  flex:1;overflow-y:auto;padding:14px 18px 32px;
-  scrollbar-width:thin;scrollbar-color:{P['border']} transparent;
-  background:{P['body_bg']}
-}}
-.ext-scroll::-webkit-scrollbar{{width:5px}}
-.ext-scroll::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
-
-.status{{
-  height:22px;background:{P['status_bg']};
-  border-top:1px solid {P['status_border']};
-  display:flex;align-items:center;padding:0 14px;gap:14px;flex-shrink:0
-}}
-.si{{
-  font-family:'JetBrains Mono',monospace;font-size:9px;
-  color:{P['txt_m']};display:flex;align-items:center;gap:4px
-}}
-.dot{{width:5px;height:5px;border-radius:50%}}
+  scrollbar-width:thin;scrollbar-color:{P['border']} transparent}}
+#pages::-webkit-scrollbar{{width:4px}}
+#pages::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
+#pages canvas{{box-shadow:0 3px 12px rgba(0,0,0,.4);max-width:100%;display:block}}
+#msg{{font-size:11px;color:{P['txt_m']};padding:40px;text-align:center}}
 </style>
 </head>
 <body>
-
-<div class="split" id="split">
-
-  <!-- PDF -->
-  <div class="pane-pdf" id="pane-pdf">
-    <div class="pane-lbl">
-      📄&nbsp;<span style="font-family:'Manrope',sans-serif;font-size:11px;
-        font-weight:500;color:{P['txt_p']};text-transform:none;letter-spacing:0">{initial_name}</span>
-    </div>
-    <div id="pdf-container">
-      <div id="pdf-loading">⏳ Chargement du PDF…</div>
-    </div>
-  </div>
-
-  <div class="resizer" id="resizer"></div>
-
-  <!-- Extraction -->
-  <div class="pane-ext" id="pane-ext">
-    <div class="pane-lbl" id="ext-pane-lbl">🧬 Extraction — {nb_lignes} ligne(s)</div>
-    <div class="ext-scroll" id="ext-scroll">{right_html}</div>
-  </div>
-
+<div id="wrap">
+  <div id="bar" id="pdf-bar">📄 {selected}</div>
+  <div id="pages"><div id="msg">⏳ Chargement…</div></div>
 </div>
-
-<div class="status">
-  <div class="si"><div class="dot" id="status-dot" style="background:{dot_color}"></div><span id="status-ext">{ext_label}</span></div>
-  <div class="si">· confiance : <span id="status-conf" style="color:{fg_st};margin-left:3px">{pct_st}</span></div>
-  <div class="si"><span id="status-champs">· {nb_champs} champ(s) manquant(s)</span></div>
-  <div class="si"><span id="status-warns">· {nb_warns} alerte(s)</span></div>
-  <div class="si" id="pdf-status">· chargement PDF…</div>
-</div>
-
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-const statusEl = document.getElementById('pdf-status');
-
-function loadPdf(url) {{
-  const container = document.getElementById('pdf-container');
-  container.innerHTML = '<div id="pdf-loading">⏳ Chargement du PDF…</div>';
-  statusEl.textContent = '· chargement PDF…';
-
+const url = {json.dumps(pdf_url)};
+if (url) {{
   pdfjsLib.getDocument(url).promise
     .then(pdf => {{
-      const total = pdf.numPages;
-      document.getElementById('pdf-loading').remove();
-      statusEl.textContent = '· page 0 / ' + total;
-      const render = n => {{
-        if (n > total) {{ statusEl.textContent = '· ' + total + ' page(s)'; return; }}
-        pdf.getPage(n).then(page => {{
-          const vp = page.getViewport({{scale:1.6}});
+      const pages = document.getElementById('pages');
+      pages.innerHTML = '';
+      const n = pdf.numPages;
+      const bar = document.getElementById('bar');
+      bar.textContent = '📄 {selected}  ·  ' + n + ' page(s)';
+      for (let i = 1; i <= n; i++) {{
+        pdf.getPage(i).then(page => {{
+          const vp = page.getViewport({{scale: 1.5}});
           const c  = document.createElement('canvas');
           c.height = vp.height; c.width = vp.width;
-          container.appendChild(c);
-          page.render({{canvasContext:c.getContext('2d'),viewport:vp}})
-            .promise.then(() => {{ statusEl.textContent = '· page ' + n + ' / ' + total; render(n+1); }});
+          pages.appendChild(c);
+          page.render({{canvasContext: c.getContext('2d'), viewport: vp}});
         }});
-      }};
-      render(1);
+      }}
     }})
-    .catch(err => {{
-      const loading = document.getElementById('pdf-loading');
-      if (loading) loading.remove();
-      container.innerHTML = '<div id="pdf-error">❌ ' + err.message + '</div>';
-      statusEl.textContent = '· erreur PDF';
+    .catch(e => {{
+      document.getElementById('pages').innerHTML =
+        '<div id="msg" style="color:#f66">❌ ' + e.message + '</div>';
     }});
+}} else {{
+  document.getElementById('msg').textContent = 'Aucun PDF sélectionné';
 }}
-
-// Chargement initial du PDF sélectionné
-loadPdf({json.dumps(pdf_url)});
-
-// Drag-to-resize
-const resizer = document.getElementById('resizer');
-const pdfPane = document.getElementById('pane-pdf');
-const split   = document.getElementById('split');
-let dragging=false, startX=0, startW=0;
-resizer.addEventListener('mousedown', e => {{
-  dragging=true; startX=e.clientX;
-  startW=pdfPane.getBoundingClientRect().width;
-  resizer.classList.add('active');
-  document.body.style.cssText+='cursor:col-resize;user-select:none';
-}});
-window.addEventListener('mousemove', e => {{
-  if (!dragging) return;
-  const total = split.getBoundingClientRect().width;
-  pdfPane.style.flex = '0 0 ' + Math.min(Math.max(startW+(e.clientX-startX),280),total-360) + 'px';
-}});
-window.addEventListener('mouseup', () => {{
-  dragging=false; resizer.classList.remove('active');
-  document.body.style.cursor=document.body.style.userSelect='';
-}});
 </script>
-</body>
-</html>"""
+</body></html>"""
+    st.components.v1.html(pdf_html, height=760, scrolling=False)
 
-st.components.v1.html(html, height=900, scrolling=False)
+# ── Colonne droite : panneau extraction ──────────────────────────────────────
+with col_ext:
+    panel      = doc.get("panel", "<p>Aucun document.</p>")
+    nb_l       = doc.get("nb_lignes", 0)
+    conf_pct   = doc.get("conf_pct", "—")
+    conf_color = doc.get("conf_color", "#888")
+    ext_html = f"""<!DOCTYPE html>
+<html lang="fr"><head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;600&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;background:{P['body_bg']};overflow:hidden;font-family:Manrope,sans-serif}}
+#wrap{{height:100%;display:flex;flex-direction:column}}
+#bar{{background:{P['hdr_bg']};border-bottom:1px solid {P['border']};
+  padding:5px 14px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}}
+#bar-left{{font-family:Manrope,sans-serif;font-size:9px;font-weight:700;
+  letter-spacing:.15em;text-transform:uppercase;color:{P['txt_m']}}}
+#bar-right{{font-family:'JetBrains Mono',monospace;font-size:12px;
+  font-weight:700;color:{conf_color}}}
+#scroll{{flex:1;overflow-y:auto;padding:14px 18px 32px;
+  scrollbar-width:thin;scrollbar-color:{P['border']} transparent;
+  background:{P['body_bg']}}}
+#scroll::-webkit-scrollbar{{width:5px}}
+#scroll::-webkit-scrollbar-thumb{{background:{P['border']};border-radius:3px}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="bar">
+    <span id="bar-left">🧬 Extraction — {nb_l} ligne(s)</span>
+    <span id="bar-right">{conf_pct}</span>
+  </div>
+  <div id="scroll">{panel}</div>
+</div>
+</body></html>"""
+    st.components.v1.html(ext_html, height=760, scrolling=False)
