@@ -384,3 +384,61 @@ def test_handle_correction_post_float_valide(engine, doc_with_dates):
 
     assert status_code == 200
     assert response["success"] is True
+
+
+# ── get_ligne_data corrected_fields ──────────────────────────────────────────
+
+def test_get_ligne_data_corrected_fields_populated_after_correction(engine, doc_with_lines):
+    """After appliquer_correction, get_ligne_data returns the corrected field in corrected_fields."""
+    from dashboard.pages._verification_helpers import get_ligne_data, handle_correction_post
+
+    doc, lignes = doc_with_lines
+    ligne_faible = lignes[1]  # ligne_numero=2, conf=0.3 → editable
+
+    # Apply a correction via the POST handler
+    handle_correction_post({
+        "ligne_id": ligne_faible.id,
+        "champ": "type_matiere",
+        "valeur_corrigee": "Cuivre rouge recyclé",
+        "confiance_originale": 0.3,
+    }, engine)
+
+    result = get_ligne_data(engine, "facture_test.pdf")
+
+    assert 2 in result
+    assert "corrected_fields" in result[2]
+    assert "type_matiere" in result[2]["corrected_fields"]
+
+
+def test_build_extraction_panel_corrected_cell_is_reeditable(engine, doc_with_lines):
+    """A corrected field (conf=1.0) gets class cell-corrected and remains re-editable."""
+    from dashboard.pages._verification_helpers import get_ligne_data, handle_correction_post
+    from dashboard.pages.verification_pdf_panel import build_extraction_panel
+
+    doc, lignes = doc_with_lines
+    ligne_faible = lignes[1]  # ligne_numero=2
+
+    # Simulate the operator saving a correction (sets conf=1.0)
+    handle_correction_post({
+        "ligne_id": ligne_faible.id,
+        "champ": "type_matiere",
+        "valeur_corrigee": "Cuivre rouge recyclé",
+        "confiance_originale": 0.3,
+    }, engine)
+
+    ligne_data = get_ligne_data(engine, "facture_test.pdf")
+
+    # Build ext with conf=1.0 (as would be stored after correction)
+    ext = _make_ext([
+        {"ligne_numero": 2, "type_matiere": "Cuivre rouge recyclé",
+         "confiance": {"type_matiere": 1.0}},
+    ])
+
+    html = build_extraction_panel(ext, _palette(), _conf_colors(), ligne_data=ligne_data)
+
+    # Must have cell-corrected class (re-editable even though conf=1.0)
+    assert 'cell-corrected' in html
+    assert f'data-ligne-id="{ligne_faible.id}"' in html
+    assert 'data-champ="type_matiere"' in html
+    # Must NOT be rendered as plain cell-editable (different visual class)
+    # (cell-corrected implies green dashed border, cell-editable implies amber)

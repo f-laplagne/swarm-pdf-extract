@@ -10,7 +10,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from dashboard.adapters.outbound.sqlalchemy_models import Document, LigneFacture
+from dashboard.adapters.outbound.sqlalchemy_models import CorrectionLog, Document, LigneFacture
 from dashboard.analytics.corrections import EDITABLE_FIELDS, appliquer_correction
 
 # Fields that must be parseable as positive floats
@@ -33,11 +33,16 @@ _LIGNE_CONF_FIELDS = [f"conf_{f}" for f in _LIGNE_VALUE_FIELDS]
 
 
 def get_ligne_data(engine, fichier: str) -> dict[int, dict]:
-    """Return {ligne_numero: {id, all value fields, all conf fields}} from DB.
+    """Return {ligne_numero: {id, all value fields, all conf fields, corrected_fields}} from DB.
 
     Used by the verification panel to overlay corrected values on top of the
     original extraction JSON — so that operator corrections persist across
     page reloads.  Returns empty dict when engine is None or document not in DB.
+
+    The ``corrected_fields`` key is a list of field names that were corrected by
+    a human operator (present in CorrectionLog).  These fields are always rendered
+    as editable even when their confidence score is ≥ CONF_SEUIL_EDITABLE (= 1.0
+    after a correction), so operators can revise their own corrections.
     """
     if engine is None:
         return {}
@@ -53,6 +58,19 @@ def get_ligne_data(engine, fichier: str) -> dict[int, dict]:
             )
             .all()
         )
+        # Build {ligne_id: set(champ)} from CorrectionLog in one query
+        ligne_ids_list = [l.id for l in lignes]
+        corrected_by_ligne: dict[int, set] = {}
+        if ligne_ids_list:
+            rows = (
+                session.query(CorrectionLog.ligne_id, CorrectionLog.champ)
+                .filter(CorrectionLog.ligne_id.in_(ligne_ids_list))
+                .distinct()
+                .all()
+            )
+            for ligne_id, champ in rows:
+                corrected_by_ligne.setdefault(ligne_id, set()).add(champ)
+
         result = {}
         for l in lignes:
             entry: dict = {"id": l.id}
@@ -60,6 +78,7 @@ def get_ligne_data(engine, fichier: str) -> dict[int, dict]:
                 entry[f] = getattr(l, f)
             for f in _LIGNE_CONF_FIELDS:
                 entry[f] = getattr(l, f)
+            entry["corrected_fields"] = list(corrected_by_ligne.get(l.id, set()))
             result[l.ligne_numero] = entry
         return result
 

@@ -257,6 +257,33 @@ html,body{{height:100%;overflow:hidden;background:{P['body_bg']};color:{P['txt_p
 .cell-editable.error {{
   border-bottom: 2px solid #ff4d4d !important;
 }}
+/* ── Re-editable corrected cells (operator already saved a value) ── */
+.cell-corrected {{
+  position: relative;
+  cursor: pointer;
+  border-bottom: 2px dashed #52c77f !important;
+}}
+.cell-corrected::after {{
+  content: '✓';
+  font-size: 9px;
+  color: #52c77f;
+  opacity: .5;
+  position: absolute;
+  top: 4px; right: 4px;
+  transition: opacity .15s;
+  pointer-events: none;
+}}
+.cell-corrected:hover::after {{ opacity: 1; }}
+.cell-corrected.editing {{
+  border-bottom: 2px solid #52c77f !important;
+  background: rgba(82,199,127,.07) !important;
+}}
+.cell-corrected.saved {{
+  border-bottom: 2px solid #52c77f !important;
+}}
+.cell-corrected.error {{
+  border-bottom: 2px solid #ff4d4d !important;
+}}
 .cell-input {{
   width: 100%;
   background: transparent;
@@ -483,7 +510,7 @@ async function saveCorrection(cell, ligneId, champ, valeurOriginale, confOrigina
     const data = await resp.json();
 
     if (data.success) {{
-      // Update DOM: show new value, keep cell-editable so it can be re-edited
+      // Update DOM: show new value; keep class (cell-editable/cell-corrected) for re-editing
       display.textContent = newValue || '—';
       display.style.display = '';
       input.style.display = 'none';
@@ -513,9 +540,9 @@ async function saveCorrection(cell, ligneId, champ, valeurOriginale, confOrigina
   }}
 }}
 
-// Event delegation: handle clicks on editable cells
+// Event delegation: handle clicks on editable cells (low-confidence OR operator-corrected)
 document.getElementById('ext-scroll').addEventListener('click', function(e) {{
-  const cell = e.target.closest('.cell-editable');
+  const cell = e.target.closest('.cell-editable, .cell-corrected');
   if (!cell) return;
 
   const display  = cell.querySelector('.cell-display');

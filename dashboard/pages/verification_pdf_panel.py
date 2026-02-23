@@ -174,12 +174,14 @@ def build_extraction_panel(
 
         # Overlay DB values first so all derived calculations use corrected data
         conf = ligne.get("confiance", {})
+        corrected_fields: set[str] = set()
         if db_row:
             ligne = dict(ligne)   # shallow copy — never mutate the original JSON list
             for _f in _VALUE_FIELDS:
                 ligne[_f] = db_row.get(_f)
             conf_from_db = {_f: db_row.get(f"conf_{_f}") for _f in _VALUE_FIELDS}
             conf = {**conf, **{k: v for k, v in conf_from_db.items() if v is not None}}
+            corrected_fields = set(db_row.get("corrected_fields") or [])
 
         bg_r       = P["row_even"] if i % 2 == 0 else P["row_odd"]
         pu, qt, pt = ligne.get("prix_unitaire"), ligne.get("quantite"), ligne.get("prix_total")
@@ -188,12 +190,12 @@ def build_extraction_panel(
                       f'vertical-align:middle;background:{bg_r};')
 
         def _cell(field: str, value, align: str, extra_style: str = "") -> str:
-            """Render a data cell, editable if conf < threshold and db_id available."""
+            """Render a data cell, editable if conf < threshold OR field was corrected."""
             score = conf.get(field)
-            is_editable = (
-                db_id is not None
-                and score is not None
-                and score < CONF_SEUIL_EDITABLE
+            is_corrected = field in corrected_fields
+            is_editable = db_id is not None and (
+                is_corrected
+                or (score is not None and score < CONF_SEUIL_EDITABLE)
             )
             display_val = ""
             if value is None:
@@ -208,6 +210,9 @@ def build_extraction_panel(
                         f'{display_val}</td>')
 
             # Editable cell: span (display) + input (hidden)
+            # cell-corrected = already corrected by operator (green dashed border)
+            # cell-editable  = low-confidence, not yet corrected (default amber border)
+            css_class = "cell-corrected" if is_corrected else "cell-editable"
             DATE_FIELDS = {"date_depart", "date_arrivee"}
             if field in FLOAT_FIELDS:
                 input_type, input_extra = "number", ' step="0.0001"'
@@ -215,11 +220,10 @@ def build_extraction_panel(
                 input_type, input_extra = "text", ' placeholder="ex: 20240315"'
             else:
                 input_type, input_extra = "text", ""
-            input_step = ' step="0.0001"' if field in FLOAT_FIELDS else ""
-            raw_val    = str(value) if value is not None else ""
+            raw_val      = str(value) if value is not None else ""
             orig_escaped = raw_val.replace('"', '&quot;')
             return (
-                f'<td class="cell-editable" {td}text-align:{align};{extra_style}"'
+                f'<td class="{css_class}" {td}text-align:{align};{extra_style}"'
                 f' data-ligne-id="{db_id}"'
                 f' data-champ="{field}"'
                 f' data-original="{orig_escaped}"'
