@@ -1,9 +1,5 @@
 import os
 import sys
-import threading
-import socket
-import functools
-import http.server
 from pathlib import Path
 
 # Ensure project root is in sys.path so "from dashboard.*" imports work
@@ -37,60 +33,13 @@ engine = get_engine(config["database"]["url"])
 init_db(engine)
 
 # ── Mini serveur HTTP pour les PDFs + corrections (Vérification PDF) ─────────
-# Démarré au niveau MODULE (pas par session) — une seule fois au boot Streamlit.
-# Sert GET (PDFs pour PDF.js), OPTIONS (CORS preflight) et POST /corrections.
+# Démarré ici ET dans 11_verification_pdf.py (fallback) grâce à ensure_started().
+# La fonction est idempotente : si le port est déjà pris, elle ne fait rien.
 PDF_SERVER_PORT = 8504
 SAMPLES_DIR = Path(_PROJECT_ROOT) / "samples"
 
-
-def _port_free(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(("localhost", port)) != 0
-
-
-class _CORSHandler(http.server.SimpleHTTPRequestHandler):
-    def end_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        super().end_headers()
-
-    def log_message(self, *_):
-        pass
-
-    def do_OPTIONS(self):
-        """CORS preflight — requis par fetch() depuis l'iframe de la page 11."""
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
-    def do_POST(self):
-        """POST /corrections — persiste les corrections inline de la page 11."""
-        import json as _json
-        from dashboard.pages._verification_helpers import handle_correction_post
-        if self.path != "/corrections":
-            self.send_response(404)
-            self.end_headers()
-            return
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            body = _json.loads(self.rfile.read(length))
-        except Exception:
-            status, resp = 400, {"success": False, "error": "JSON invalide"}
-        else:
-            # `engine` est une variable module-level (get_engine est un singleton par URL)
-            status, resp = handle_correction_post(body, engine)
-        payload = _json.dumps(resp).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-
-if _port_free(PDF_SERVER_PORT):
-    _handler = functools.partial(_CORSHandler, directory=str(SAMPLES_DIR))
-    _srv = http.server.HTTPServer(("localhost", PDF_SERVER_PORT), _handler)
-    threading.Thread(target=_srv.serve_forever, daemon=True).start()
+from dashboard.pages._pdf_server_startup import ensure_started as _ensure_pdf_server
+_ensure_pdf_server(engine, SAMPLES_DIR, PDF_SERVER_PORT)
 
 # Store in session state
 if "engine" not in st.session_state:

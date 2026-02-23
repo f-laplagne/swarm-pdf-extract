@@ -239,3 +239,148 @@ def test_no_editable_cell_when_no_ligne_id(engine):
     html = build_extraction_panel(ext, _palette(), _conf_colors(), ligne_ids={})
 
     assert 'cell-editable' not in html
+
+
+# ── Validation des types et des règles métier ─────────────────────────────────
+
+@pytest.fixture
+def doc_with_dates(session):
+    """A document with one line that has both date_depart and date_arrivee set."""
+    fournisseur = Fournisseur(nom="Transport SA")
+    session.add(fournisseur)
+    session.flush()
+
+    doc = Document(
+        fichier="transport_test.pdf",
+        type_document="bon_livraison",
+        confiance_globale=0.4,
+        fournisseur_id=fournisseur.id,
+    )
+    session.add(doc)
+    session.flush()
+
+    ligne = LigneFacture(
+        document_id=doc.id,
+        ligne_numero=1,
+        date_depart="2024-05-10",
+        date_arrivee="2024-05-15",
+        conf_date_depart=0.3,
+        conf_date_arrivee=0.3,
+        prix_unitaire=100.0,
+        conf_prix_unitaire=0.3,
+    )
+    session.add(ligne)
+    session.commit()
+    return doc, ligne
+
+
+def test_handle_correction_post_date_format_invalide(engine, doc_with_dates):
+    """A date value not matching YYYY-MM-DD returns 400."""
+    from dashboard.pages._verification_helpers import handle_correction_post
+
+    _, ligne = doc_with_dates
+    body = {
+        "ligne_id": ligne.id,
+        "champ": "date_arrivee",
+        "valeur_corrigee": "15/05/2024",  # wrong format
+        "confiance_originale": 0.3,
+    }
+
+    status_code, response = handle_correction_post(body, engine)
+
+    assert status_code == 400
+    assert response["success"] is False
+    assert "date" in response["error"].lower()
+
+
+def test_handle_correction_post_date_arrivee_avant_date_depart(engine, doc_with_dates):
+    """Setting date_arrivee earlier than existing date_depart returns 400."""
+    from dashboard.pages._verification_helpers import handle_correction_post
+
+    _, ligne = doc_with_dates  # date_depart="2024-05-10"
+    body = {
+        "ligne_id": ligne.id,
+        "champ": "date_arrivee",
+        "valeur_corrigee": "2024-05-05",  # before date_depart
+        "confiance_originale": 0.3,
+    }
+
+    status_code, response = handle_correction_post(body, engine)
+
+    assert status_code == 400
+    assert response["success"] is False
+    assert "antérieure" in response["error"] or "avant" in response["error"] or "départ" in response["error"]
+
+
+def test_handle_correction_post_date_depart_apres_date_arrivee(engine, doc_with_dates):
+    """Setting date_depart later than existing date_arrivee returns 400."""
+    from dashboard.pages._verification_helpers import handle_correction_post
+
+    _, ligne = doc_with_dates  # date_arrivee="2024-05-15"
+    body = {
+        "ligne_id": ligne.id,
+        "champ": "date_depart",
+        "valeur_corrigee": "2024-05-20",  # after date_arrivee
+        "confiance_originale": 0.3,
+    }
+
+    status_code, response = handle_correction_post(body, engine)
+
+    assert status_code == 400
+    assert response["success"] is False
+    assert "arrivée" in response["error"] or "après" in response["error"] or "arrivee" in response["error"]
+
+
+def test_handle_correction_post_date_valide_acceptee(engine, doc_with_dates):
+    """A date within valid range is accepted."""
+    from dashboard.pages._verification_helpers import handle_correction_post
+
+    _, ligne = doc_with_dates  # date_depart="2024-05-10", date_arrivee="2024-05-15"
+    body = {
+        "ligne_id": ligne.id,
+        "champ": "date_arrivee",
+        "valeur_corrigee": "2024-05-12",  # between depart and 15
+        "confiance_originale": 0.3,
+    }
+
+    status_code, response = handle_correction_post(body, engine)
+
+    assert status_code == 200
+    assert response["success"] is True
+
+
+def test_handle_correction_post_float_invalide(engine, doc_with_dates):
+    """A non-numeric value for a float field returns 400."""
+    from dashboard.pages._verification_helpers import handle_correction_post
+
+    _, ligne = doc_with_dates
+    body = {
+        "ligne_id": ligne.id,
+        "champ": "prix_unitaire",
+        "valeur_corrigee": "pas_un_nombre",
+        "confiance_originale": 0.3,
+    }
+
+    status_code, response = handle_correction_post(body, engine)
+
+    assert status_code == 400
+    assert response["success"] is False
+    assert "numérique" in response["error"] or "nombre" in response["error"]
+
+
+def test_handle_correction_post_float_valide(engine, doc_with_dates):
+    """A valid numeric string for a float field is accepted."""
+    from dashboard.pages._verification_helpers import handle_correction_post
+
+    _, ligne = doc_with_dates
+    body = {
+        "ligne_id": ligne.id,
+        "champ": "prix_unitaire",
+        "valeur_corrigee": "42.75",
+        "confiance_originale": 0.3,
+    }
+
+    status_code, response = handle_correction_post(body, engine)
+
+    assert status_code == 200
+    assert response["success"] is True

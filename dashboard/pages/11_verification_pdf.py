@@ -136,17 +136,35 @@ def _conf_colors():
 P  = _pal()
 cc = _conf_colors()
 
-from dashboard.pages._verification_helpers import get_ligne_ids
+from dashboard.pages._verification_helpers import get_ligne_ids, get_ligne_data
+from dashboard.pages._pdf_server_startup import ensure_started as _ensure_pdf_server
+
+# ── Fallback : si app.py n'a pas encore tourné dans cette session ─────────────
+# (l'utilisateur a ouvert directement la page 11 sans passer par l'accueil)
+_engine_for_render = st.session_state.get("engine")
+
+if _engine_for_render is None:
+    import yaml as _yaml
+    from dashboard.data.db import get_engine as _get_engine, init_db as _init_db
+    _cfg_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+    with open(_cfg_path) as _f:
+        _engine_for_render = _get_engine(_yaml.safe_load(_f)["database"]["url"])
+    _init_db(_engine_for_render)
+    st.session_state.engine = _engine_for_render
+    st.session_state.pdf_server_port = PDF_SERVER_PORT
+
+# Démarre le serveur HTTP 8504 s'il n'est pas encore actif
+_ensure_pdf_server(_engine_for_render, SAMPLES_DIR, PDF_SERVER_PORT)
 
 all_docs: dict = {}
-_engine_for_render = st.session_state.get("engine")
 
 for pdf_path in PDF_FILES:
     ext_path = find_extraction(pdf_path)
     ext      = json.loads(ext_path.read_text(encoding="utf-8")) if ext_path else None
 
-    # Enrich with DB ligne IDs so editable cells can be rendered
-    _ligne_ids = get_ligne_ids(_engine_for_render, pdf_path.name) if ext else {}
+    # Load DB data (corrected values + IDs) for lines that exist in DB
+    _ligne_data = get_ligne_data(_engine_for_render, pdf_path.name) if ext else {}
+    _ligne_ids  = {num: row["id"] for num, row in _ligne_data.items()}  # backward compat
 
     nb_l  = len(ext.get("lignes", [])) if ext else 0
     conf  = ext.get("confiance_globale", 0) if ext else 0
@@ -154,7 +172,7 @@ for pdf_path in PDF_FILES:
     fg, _ = cc[tier]
     all_docs[pdf_path.name] = {
         "url":        f"http://localhost:{PDF_SERVER_PORT}/{quote(pdf_path.name)}",
-        "panel":      build_extraction_panel(ext, P, cc, ligne_ids=_ligne_ids),
+        "panel":      build_extraction_panel(ext, P, cc, ligne_ids=_ligne_ids, ligne_data=_ligne_data),
         "nb_lignes":  nb_l,
         "nb_champs":  len(ext.get("champs_manquants", [])) if ext else 0,
         "nb_warns":   len(ext.get("warnings", [])) if ext else 0,
@@ -287,8 +305,18 @@ html,body{{height:100%;overflow:hidden;background:{P['body_bg']};color:{P['txt_p
 </div>
 
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// ── PDF.js init — guard: if CDN fails to load, corrections still work ─────
+let _pdfJsReady = false;
+try {{
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  _pdfJsReady = true;
+}} catch(e) {{
+  const ld = document.getElementById('pdf-loading');
+  if (ld) ld.textContent = '⚠ Visionneur PDF indisponible (CDN inaccessible). Les corrections restent actives.';
+  const st = document.getElementById('pdf-status');
+  if (st) st.textContent = '· PDF.js indisponible';
+}}
 
 // ── Hauteur dynamique — API Streamlit Component Protocol ─────────────────
 // Le type DOIT être 'streamlit:setFrameHeight' (préfixe requis depuis Streamlit 1.24).
@@ -325,6 +353,10 @@ const ALL_DOCS = {all_docs_json};
 
 function loadPdf(url) {{
   const container = document.getElementById('pdf-container');
+  if (!_pdfJsReady) {{
+    container.innerHTML = '<div id="pdf-loading" style="color:#f90;padding:20px;font-size:12px">⚠ Visionneur PDF indisponible — corrigez les données à droite normalement.</div>';
+    return;
+  }}
   container.innerHTML = '<div id="pdf-loading">⏳ Chargement du PDF…</div>';
   document.getElementById('pdf-status').textContent = '· chargement PDF…';
   pdfjsLib.getDocument(url).promise
@@ -451,13 +483,14 @@ async function saveCorrection(cell, ligneId, champ, valeurOriginale, confOrigina
     const data = await resp.json();
 
     if (data.success) {{
-      // Update DOM: show new value, remove editable class
+      // Update DOM: show new value, keep cell-editable so it can be re-edited
       display.textContent = newValue || '—';
       display.style.display = '';
       input.style.display = 'none';
-      cell.classList.remove('editing', 'cell-editable');
-      cell.classList.add('saved');
-      cell.dataset.original = newValue;
+      input.disabled = false;
+      cell.classList.remove('editing');
+      cell.classList.add('saved');       // green border = saved indicator
+      cell.dataset.original = newValue; // update baseline for next edit
       updateConfBadge(ligneId, champ);
     }} else {{
       // Revert
@@ -483,7 +516,7 @@ async function saveCorrection(cell, ligneId, champ, valeurOriginale, confOrigina
 // Event delegation: handle clicks on editable cells
 document.getElementById('ext-scroll').addEventListener('click', function(e) {{
   const cell = e.target.closest('.cell-editable');
-  if (!cell || cell.classList.contains('saved')) return;
+  if (!cell) return;
 
   const display  = cell.querySelector('.cell-display');
   const input    = cell.querySelector('.cell-input');
@@ -494,22 +527,107 @@ document.getElementById('ext-scroll').addEventListener('click', function(e) {{
   input.style.display   = '';
   input.value = cell.dataset.original || '';
   cell.classList.add('editing');
+  const FLOAT_FIELDS_JS = new Set(['prix_unitaire', 'quantite', 'prix_total']);
+  const DATE_FIELDS_JS  = new Set(['date_depart', 'date_arrivee']);
+
   input.focus();
   input.select();
+
+  // Auto-format date fields: user types digits only → YYYY-MM-DD inserted automatically
+  if (DATE_FIELDS_JS.has(cell.dataset.champ)) {{
+    input.addEventListener('input', function() {{
+      const oldVal = input.value;
+      const cursorPos = input.selectionStart;
+      // Count how many digits are before the cursor in the current (unformatted) value
+      const digitsBeforeCursor = oldVal.slice(0, cursorPos).replace(/[^0-9]/g, '').length;
+      // Build formatted string from digits only
+      const raw = oldVal.replace(/[^0-9]/g, '').slice(0, 8);
+      let fmt = raw;
+      if (raw.length > 6) fmt = raw.slice(0,4) + '-' + raw.slice(4,6) + '-' + raw.slice(6);
+      else if (raw.length > 4) fmt = raw.slice(0,4) + '-' + raw.slice(4);
+      if (oldVal !== fmt) {{
+        input.value = fmt;
+        // Restore cursor: find position in formatted string with same number of digits before it
+        let digitCount = 0, newPos = fmt.length;
+        for (let i = 0; i < fmt.length; i++) {{
+          if (digitCount >= digitsBeforeCursor) {{ newPos = i; break; }}
+          if (fmt[i] !== '-') digitCount++;
+        }}
+        input.setSelectionRange(newPos, newPos);
+      }}
+    }});
+  }}
+
+  function parseDate(s) {{
+    // Returns Date or null
+    const m = /^([0-9]{{4}})-([0-9]{{2}})-([0-9]{{2}})$/.exec(s);
+    if (!m) return null;
+    const d = new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));
+    // re-check for invalid calendar dates (e.g. 2024-02-30)
+    return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2]-1 && d.getUTCDate() === +m[3] ? d : null;
+  }}
+
+  function findSiblingDate(champ) {{
+    // Find the other date cell in the same table row (2 rows above for the conf-badge row)
+    let row = cell.parentElement;
+    // cell is a <td> inside a <tr>
+    const tds = row.querySelectorAll('td[data-champ]');
+    for (const td of tds) {{
+      if (td.dataset.champ === champ) return td.dataset.original || null;
+    }}
+    return null;
+  }}
 
   function commitEdit() {{
     const newVal   = input.value.trim();
     const origVal  = cell.dataset.original || '';
+    const champ    = cell.dataset.champ;
     display.style.display = '';
     input.style.display   = 'none';
     cell.classList.remove('editing');
 
     if (newVal === origVal || newVal === '') return; // no change
 
+    // Client-side type validation (mirrors server-side rules for instant feedback)
+    if (FLOAT_FIELDS_JS.has(champ)) {{
+      if (isNaN(parseFloat(newVal)) || !isFinite(newVal)) {{
+        showError(cell, 'Valeur numérique attendue (ex: 42.50)');
+        return;
+      }}
+    }}
+
+    if (DATE_FIELDS_JS.has(champ)) {{
+      const d = parseDate(newVal);
+      if (!d) {{
+        showError(cell, 'Format de date invalide — attendu AAAA-MM-JJ');
+        return;
+      }}
+      if (champ === 'date_arrivee') {{
+        const depStr = findSiblingDate('date_depart');
+        if (depStr) {{
+          const dep = parseDate(depStr);
+          if (dep && d < dep) {{
+            showError(cell, 'Date d\\'arrivée antérieure au départ (' + depStr + ')');
+            return;
+          }}
+        }}
+      }}
+      if (champ === 'date_depart') {{
+        const arrStr = findSiblingDate('date_arrivee');
+        if (arrStr) {{
+          const arr = parseDate(arrStr);
+          if (arr && d > arr) {{
+            showError(cell, 'Date de départ après la date d\\'arrivée (' + arrStr + ')');
+            return;
+          }}
+        }}
+      }}
+    }}
+
     saveCorrection(
       cell,
       cell.dataset.ligneId,
-      cell.dataset.champ,
+      champ,
       origVal,
       cell.dataset.conf,
       newVal,
@@ -523,11 +641,12 @@ document.getElementById('ext-scroll').addEventListener('click', function(e) {{
     cell.classList.remove('editing');
   }}
 
-  input.addEventListener('blur',    commitEdit,  {{ once: true }});
-  input.addEventListener('keydown', function(ke) {{
-    if (ke.key === 'Enter')  {{ ke.preventDefault(); input.blur(); }}
-    if (ke.key === 'Escape') {{ ke.preventDefault(); input.removeEventListener('blur', commitEdit); cancelEdit(); }}
-  }}, {{ once: true }});
+  input.addEventListener('blur', commitEdit, {{ once: true }});
+  function onKeydown(ke) {{
+    if (ke.key === 'Enter')  {{ ke.preventDefault(); input.removeEventListener('keydown', onKeydown); input.blur(); }}
+    if (ke.key === 'Escape') {{ ke.preventDefault(); input.removeEventListener('keydown', onKeydown); input.removeEventListener('blur', commitEdit); cancelEdit(); }}
+  }}
+  input.addEventListener('keydown', onKeydown);
 }});
 </script>
 </body>

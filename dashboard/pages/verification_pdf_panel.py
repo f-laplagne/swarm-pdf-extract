@@ -52,6 +52,7 @@ def build_extraction_panel(
     P: dict,
     cc: dict,
     ligne_ids: dict[int, int] | None = None,
+    ligne_data: dict[int, dict] | None = None,
 ) -> str:
     """Build the HTML for the extraction data panel.
 
@@ -59,15 +60,18 @@ def build_extraction_panel(
         ext: Parsed extraction JSON dict, or None if extraction not found.
         P: Color palette dict.
         cc: Confidence colors dict.
-        ligne_ids: Optional {ligne_numero: db_ligne_id}. When provided, cells
-                   with conf < CONF_SEUIL_EDITABLE get editable attributes.
-                   If None or empty, all cells are read-only.
+        ligne_ids: Optional {ligne_numero: db_ligne_id}. Kept for compatibility.
+        ligne_data: Optional {ligne_numero: {id, field values, conf values}} from DB.
+                    When provided, DB values override JSON values so operator
+                    corrections survive page reloads.
 
     Returns:
         HTML string for the right panel.
     """
     if ligne_ids is None:
         ligne_ids = {}
+    if ligne_data is None:
+        ligne_data = {}
 
     if not ext:
         return (f"<p style='color:{P['txt_dim']};padding:40px;"
@@ -159,17 +163,29 @@ def build_extraction_panel(
         for n, w, a in col_defs
     )
 
+    _VALUE_FIELDS = ["type_matiere", "unite", "prix_unitaire", "quantite", "prix_total",
+                     "date_depart", "date_arrivee", "lieu_depart", "lieu_arrivee"]
+
     rows = ""
     for i, ligne in enumerate(lignes):
-        conf       = ligne.get("confiance", {})
+        ligne_num = ligne.get("ligne_numero")
+        db_row    = ligne_data.get(ligne_num)
+        db_id     = db_row["id"] if db_row else ligne_ids.get(ligne_num)
+
+        # Overlay DB values first so all derived calculations use corrected data
+        conf = ligne.get("confiance", {})
+        if db_row:
+            ligne = dict(ligne)   # shallow copy — never mutate the original JSON list
+            for _f in _VALUE_FIELDS:
+                ligne[_f] = db_row.get(_f)
+            conf_from_db = {_f: db_row.get(f"conf_{_f}") for _f in _VALUE_FIELDS}
+            conf = {**conf, **{k: v for k, v in conf_from_db.items() if v is not None}}
+
         bg_r       = P["row_even"] if i % 2 == 0 else P["row_odd"]
         pu, qt, pt = ligne.get("prix_unitaire"), ligne.get("quantite"), ligne.get("prix_total")
         total_c    = "#ff6b6b" if (pu and qt and pt and abs(round(pu*qt,2)-pt) > 0.02) else P["txt_p"]
         td         = (f'style="padding:7px 10px;border-bottom:1px solid {P["border_light"]};'
                       f'vertical-align:middle;background:{bg_r};')
-
-        ligne_num = ligne.get("ligne_numero")
-        db_id     = ligne_ids.get(ligne_num)  # None if not in DB
 
         def _cell(field: str, value, align: str, extra_style: str = "") -> str:
             """Render a data cell, editable if conf < threshold and db_id available."""
@@ -192,7 +208,13 @@ def build_extraction_panel(
                         f'{display_val}</td>')
 
             # Editable cell: span (display) + input (hidden)
-            input_type = "number" if field in FLOAT_FIELDS else "text"
+            DATE_FIELDS = {"date_depart", "date_arrivee"}
+            if field in FLOAT_FIELDS:
+                input_type, input_extra = "number", ' step="0.0001"'
+            elif field in DATE_FIELDS:
+                input_type, input_extra = "text", ' placeholder="ex: 20240315"'
+            else:
+                input_type, input_extra = "text", ""
             input_step = ' step="0.0001"' if field in FLOAT_FIELDS else ""
             raw_val    = str(value) if value is not None else ""
             orig_escaped = raw_val.replace('"', '&quot;')
@@ -203,7 +225,7 @@ def build_extraction_panel(
                 f' data-original="{orig_escaped}"'
                 f' data-conf="{score}">'
                 f'<span class="cell-display">{display_val}</span>'
-                f'<input class="cell-input" type="{input_type}"{input_step}'
+                f'<input class="cell-input" type="{input_type}"{input_extra}'
                 f' value="{orig_escaped}" style="display:none">'
                 f'</td>'
             )
